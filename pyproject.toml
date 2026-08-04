@@ -1,0 +1,10 @@
+[project]
+name = "embedded-ai-copilot"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.141.1",
+    "openai>=2.53.0",
+    "python-dotenv>=1.2.2",
+    "uvicorn[standard]>=0.52.1",
+]
