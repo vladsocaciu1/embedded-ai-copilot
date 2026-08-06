@@ -11,7 +11,7 @@ def build_assistant_prompt(project_files:list[ProjectFile], question: str) -> st
     Build a prompt that includes the assistant prompt, context, and the user's question.
 
     Args:
-        context (str): The context to include in the prompt.
+        project_files (list[ProjectFile]): A list of ProjectFile objects containing the path and content of each file.
         question (str): The user's question.
 
     Returns:
@@ -30,7 +30,7 @@ def _format_project_context(project_files: list[ProjectFile]) -> str:
         project_files (list[ProjectFile]): A list of ProjectFile objects.
 
     Returns:
-        str: A formatted string representing the project files.
+        str: A formatted string representing the project files contents.
     """
     sections = []
     

@@ -144,4 +144,4 @@ int main(void)
 }
 
 Question:
-Can you summarize the code to me and explain it like I am a beginner?
+Can you explain to me what the can module does?
