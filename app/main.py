@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from app import ai_service
+from pydantic import ValidationError
 
 app = FastAPI()
 
@@ -14,5 +15,13 @@ async def read_root():
 
 @app.post("/ask")
 async def process_prompt(request: AskRequest):
-    answer = ai_service.generate_answer(request.question)
+    try:
+        answer = ai_service.generate_answer(request.question)
+    except ValidationError as e:
+        print(f"Validation error: {e}")
+        return {"error": "Invalid request format."}
+    except Exception as e:
+        print(f"Error generating answer: {e}")
+        return {"error": "Gemini could not generate an answer."}
+
     return {"answer": answer}

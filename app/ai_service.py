@@ -1,14 +1,12 @@
-import os
-
-from dotenv import load_dotenv
+from pathlib import Path
 from google import genai
+from google.genai import errors
 
-load_dotenv()
-gemini_key = os.getenv("GEMINI_API_KEY")
-if not gemini_key:
-    raise RuntimeError("GEMINI_API_KEY is not set.")
+from app.config import PROJECT_PATH_CFG, GEMINI_KEY, GEMINI_MODEL
+from app.project_loader import load_project_files
+from app.prompts import build_assistant_prompt
 
-client = genai.Client(api_key=gemini_key)
+client = genai.Client(api_key=GEMINI_KEY)
 
 def generate_answer(question: str) -> str:
     """
@@ -20,9 +18,37 @@ def generate_answer(question: str) -> str:
     Returns:
         str: The generated answer.
     """
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
-        contents=question,
-    )
-   
-    return response.text
+    # Load project path
+    project_path = PROJECT_PATH_CFG
+
+    # Load project files from the specified project path
+    project_files = load_project_files(project_path)
+
+    # Build the prompt using the loaded project files and the user's question
+    prompt = build_assistant_prompt(project_files, question)
+    
+    output = Path("test/generated_prompt_test.md")
+    output.write_text(prompt, encoding="utf-8")
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+        )
+       
+        return response.text
+    except errors.ClientError as e:
+        # 4xx errors
+        print(f"Client error: {e}")
+        return "Client error occurred."
+    except errors.ServerError as e:
+        # 5xx errors (retry recommended)
+        print(f"Server error: {e}")
+        return "Server error occurred."
+    except errors.APIError as e:
+        # Any other API error
+        print(f"API error: {e}")
+        return "API error occurred."
+    except Exception as e:
+        # Catch-all for any other exceptions
+        print(f"Unexpected error: {e}")
+        return "An unexpected error occurred."
