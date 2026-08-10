@@ -1,4 +1,5 @@
 import logging
+import time
 
 from pathlib import Path
 from google import genai
@@ -26,14 +27,18 @@ def generate_answer(question: str) -> str:
     project_path = PROJECT_PATH
 
     # Load project files from the specified project path
-    project_files = load_project_files(project_path)
+    try:
+        project_files = load_project_files(project_path)
+    except ValueError:
+        logger.exception(f"Invalid project path: {project_path}")
+        return "Invalid project path."
 
-    # Build the prompt using the loaded project files and the user's question
+    logger.info(f"Loaded {len(project_files)} project files from {project_path}")
+
     prompt = build_assistant_prompt(project_files, question)
 
-    #Prompt output for testing
-    output = Path("test/generated_prompt_test.md")
-    output.write_text(prompt, encoding="utf-8")
+    logger.info(f"Sending request to Gemini API.")
+    start_time = time.perf_counter()
 
     try:
         response = client.models.generate_content(
@@ -41,20 +46,25 @@ def generate_answer(question: str) -> str:
             contents=prompt,
         )
        
+        logger.info("Received response from Gemini API.")
         return response.text
-    except errors.ClientError as e:
+    except errors.ClientError:
         # 4xx errors
-        logger.error(f"Client error: {e}")
+        logger.exception(f"Client error.")
         return "Client error occurred."
-    except errors.ServerError as e:
+    except errors.ServerError:
         # 5xx errors (retry recommended)
-        logger.error(f"Server error: {e}")
+        logger.exception(f"Server error.")
         return "Server error occurred."
-    except errors.APIError as e:
+    except errors.APIError:
         # Any other API error
-        logger.error(f"API error: {e}")
+        logger.exception(f"API error.")
         return "API error occurred."
-    except Exception as e:
+    except Exception:
         # Catch-all for any other exceptions
-        logger.error(f"Unexpected error: {e}")
+        logger.exception(f"Unexpected error.")
         return "An unexpected error occurred."
+    
+    finally:
+        elapsed_time = (time.perf_counter() - start_time)*1000  # Convert to milliseconds
+        logger.info(f"Gemini API request completed in {elapsed_time:.0f} milliseconds.")

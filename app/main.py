@@ -15,6 +15,7 @@ app = FastAPI()
 class AskRequest(BaseModel):
     question: str
 
+logger.info("FastAPI application initialized.")
 
 @app.get("/")
 async def read_root():
@@ -26,11 +27,11 @@ async def process_prompt(request: AskRequest):
     logger.info("Ask endpoint accessed.")
     try:
         answer = ai_service.generate_answer(request.question)
-    except ValidationError as e:
-        logger.error(f"Validation error: {e}")
+    except ValidationError:
+        logger.exception(f"Validation error.")
         return {"error": "Invalid request format."}
-    except Exception as e:
-        logger.error(f"Error generating answer: {e}")
+    except Exception:
+        logger.exception(f"Error generating answer.")
         return {"error": "Gemini could not generate an answer."}
 
     return {"answer": answer}

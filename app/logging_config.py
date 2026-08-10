@@ -1,6 +1,10 @@
 import logging
 
 from logging.config import dictConfig
+from pathlib import Path
+
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
 def setup_logging(level=logging.INFO):
     dictConfig({
@@ -23,10 +27,13 @@ def setup_logging(level=logging.INFO):
                 "level": level,
             },
             "file": {
-                "class": "logging.FileHandler",
-                "filename": "app/logs/app.log",
+                "class": "logging.handlers.RotatingFileHandler",
+                "filename": str(LOG_DIR / "app.log"),
+                "maxBytes": 10 * 1024 * 1024,  # 10 MB
+                "backupCount": 5,
                 "formatter": "standard",
                 "level": level,
+                "encoding": "utf-8",
             },
         },
 
