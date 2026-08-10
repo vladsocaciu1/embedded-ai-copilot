@@ -1,5 +1,9 @@
+import logging
+
 from pathlib import Path
 from app.models import ProjectFile
+
+logger = logging.getLogger(__name__)
 
 assistant_prompt_path = Path(__file__).resolve().parent / "prompts" / "assistant.md"
 
