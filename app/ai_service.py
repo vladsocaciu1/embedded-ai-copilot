@@ -1,7 +1,6 @@
 import logging
 import time
 
-from pathlib import Path
 from google import genai
 from google.genai import errors
 
@@ -26,6 +25,10 @@ class ProjectLoadError(AIServiceError):
 
 class UpstreamRejectedError(AIServiceError):
     """Gemini rejected the request (4xx)."""
+
+
+class EmptyUpstreamResponseError(UpstreamRejectedError):
+    """Gemini returned no text (blocked or empty)."""
 
 
 class UpstreamUnavailableError(AIServiceError):
@@ -66,7 +69,6 @@ def generate_answer(question: str) -> str:
         )
        
         logger.info("Received response from Gemini API.")
-        return response.text
     except errors.ClientError as e:
         # 4xx errors
         logger.exception(f"Client error.")
@@ -79,6 +81,14 @@ def generate_answer(question: str) -> str:
         # Any other API error
         logger.exception(f"API error.")
         raise UpstreamUnavailableError("AI provider is unavailable.") from e
+    else:
+        # Checked outside the google-genai handlers so an empty body is not
+        # remapped to UpstreamUnavailableError or swallowed.
+        answer = response.text
+        if answer is None or answer == "":
+            logger.error("Gemini returned an empty response.")
+            raise EmptyUpstreamResponseError("AI provider returned an empty response.")
+        return answer
 
     finally:
         elapsed_time = (time.perf_counter() - start_time)*1000  # Convert to milliseconds

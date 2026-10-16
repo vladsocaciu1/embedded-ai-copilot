@@ -211,3 +211,34 @@ def test_generate_answer_runtime_error_propagates(ai_service):
         module.generate_answer(QUESTION)
 
     assert exc_info.value is boom
+
+
+def test_generate_answer_none_text_raises_empty_upstream_response(ai_service):
+
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.return_value.text = None
+
+    # Act / Assert
+    with pytest.raises(module.EmptyUpstreamResponseError):
+        module.generate_answer(QUESTION)
+
+
+def test_generate_answer_empty_text_raises_empty_upstream_response(ai_service):
+
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.return_value.text = ""
+
+    # Act / Assert
+    with pytest.raises(module.EmptyUpstreamResponseError):
+        module.generate_answer(QUESTION)
+
+
+def test_empty_upstream_response_error_subclasses_upstream_rejected(ai_service):
+
+    # Arrange
+    module, _client = ai_service
+
+    # Act / Assert
+    assert issubclass(module.EmptyUpstreamResponseError, module.UpstreamRejectedError)
