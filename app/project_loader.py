@@ -29,7 +29,13 @@ def load_project_files(project_path: Path) -> list[ProjectFile]:
     project_files = []
     for file in project_path.rglob('*'):
         if file.is_file() and file.suffix in SUPPORTED_EXTENSIONS:
-            with file.open('r', encoding='utf-8') as f:
-                project_files.append(ProjectFile(path=file, content=f.read()))
+            try:
+                with file.open('r', encoding='utf-8') as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                logger.warning(f"Skipping non-UTF-8 file: {file}")
+                continue
+
+            project_files.append(ProjectFile(path=file, content=content))
 
     return project_files
