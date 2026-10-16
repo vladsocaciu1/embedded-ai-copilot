@@ -1,5 +1,6 @@
 import logging
 
+import pytest
 from google.genai import errors
 
 from app.config import Settings
@@ -53,7 +54,8 @@ def test_generate_answer_invalid_project_path_does_not_call_gemini(ai_service, m
     )
 
     # Act
-    module.generate_answer(QUESTION)
+    with pytest.raises(module.ProjectLoadError):
+        module.generate_answer(QUESTION)
 
     # Assert
     client.models.generate_content.assert_not_called()
@@ -90,7 +92,8 @@ def test_generate_answer_logs_do_not_contain_api_key(ai_service, caplog, monkeyp
             gemini_model="test-model",
         ),
     )
-    module.generate_answer(QUESTION)
+    with pytest.raises(module.ProjectLoadError):
+        module.generate_answer(QUESTION)
     assert_secret_absent()
 
     monkeypatch.setattr(module, "settings", valid_settings)
@@ -101,7 +104,8 @@ def test_generate_answer_logs_do_not_contain_api_key(ai_service, caplog, monkeyp
         400,
         {"message": "bad request", "status": "INVALID_ARGUMENT"},
     )
-    module.generate_answer(QUESTION)
+    with pytest.raises(module.UpstreamRejectedError):
+        module.generate_answer(QUESTION)
     assert_secret_absent()
 
     # Act / Assert: ServerError
@@ -110,7 +114,8 @@ def test_generate_answer_logs_do_not_contain_api_key(ai_service, caplog, monkeyp
         500,
         {"message": "unavailable", "status": "UNAVAILABLE"},
     )
-    module.generate_answer(QUESTION)
+    with pytest.raises(module.UpstreamUnavailableError):
+        module.generate_answer(QUESTION)
     assert_secret_absent()
 
     # Act / Assert: other APIError
@@ -119,15 +124,15 @@ def test_generate_answer_logs_do_not_contain_api_key(ai_service, caplog, monkeyp
         302,
         {"message": "redirected", "status": "FOUND"},
     )
-    module.generate_answer(QUESTION)
+    with pytest.raises(module.UpstreamUnavailableError):
+        module.generate_answer(QUESTION)
     assert_secret_absent()
 
 
-def test_generate_answer_invalid_project_path_returns_invalid_path_message(ai_service, monkeypatch, tmp_path):
-    # spec-04 will change this
+def test_generate_answer_invalid_project_path_raises_project_load_error(ai_service, monkeypatch, tmp_path):
 
     # Arrange
-    module, _client = ai_service
+    module, client = ai_service
     monkeypatch.setattr(
         module,
         "settings",
@@ -138,15 +143,15 @@ def test_generate_answer_invalid_project_path_returns_invalid_path_message(ai_se
         ),
     )
 
-    # Act
-    answer = module.generate_answer(QUESTION)
+    # Act / Assert
+    with pytest.raises(module.ProjectLoadError) as exc_info:
+        module.generate_answer(QUESTION)
 
-    # Assert
-    assert answer == "Invalid project path."
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    client.models.generate_content.assert_not_called()
 
 
-def test_generate_answer_client_error_returns_client_error_message(ai_service):
-    # spec-04 will change this
+def test_generate_answer_client_error_raises_upstream_rejected(ai_service):
 
     # Arrange
     module, client = ai_service
@@ -155,15 +160,14 @@ def test_generate_answer_client_error_returns_client_error_message(ai_service):
         {"message": "bad request", "status": "INVALID_ARGUMENT"},
     )
 
-    # Act
-    answer = module.generate_answer(QUESTION)
+    # Act / Assert
+    with pytest.raises(module.UpstreamRejectedError) as exc_info:
+        module.generate_answer(QUESTION)
 
-    # Assert
-    assert answer == "Client error occurred."
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
-def test_generate_answer_server_error_returns_server_error_message(ai_service):
-    # spec-04 will change this
+def test_generate_answer_server_error_raises_upstream_unavailable(ai_service):
 
     # Arrange
     module, client = ai_service
@@ -172,15 +176,14 @@ def test_generate_answer_server_error_returns_server_error_message(ai_service):
         {"message": "unavailable", "status": "UNAVAILABLE"},
     )
 
-    # Act
-    answer = module.generate_answer(QUESTION)
+    # Act / Assert
+    with pytest.raises(module.UpstreamUnavailableError) as exc_info:
+        module.generate_answer(QUESTION)
 
-    # Assert
-    assert answer == "Server error occurred."
+    assert isinstance(exc_info.value.__cause__, errors.ServerError)
 
 
-def test_generate_answer_api_error_returns_api_error_message(ai_service):
-    # spec-04 will change this
+def test_generate_answer_api_error_raises_upstream_unavailable(ai_service):
 
     # Arrange
     module, client = ai_service
@@ -189,8 +192,22 @@ def test_generate_answer_api_error_returns_api_error_message(ai_service):
         {"message": "redirected", "status": "FOUND"},
     )
 
-    # Act
-    answer = module.generate_answer(QUESTION)
+    # Act / Assert
+    with pytest.raises(module.UpstreamUnavailableError) as exc_info:
+        module.generate_answer(QUESTION)
 
-    # Assert
-    assert answer == "API error occurred."
+    assert type(exc_info.value.__cause__) is errors.APIError
+
+
+def test_generate_answer_runtime_error_propagates(ai_service):
+
+    # Arrange
+    module, client = ai_service
+    boom = RuntimeError("boom")
+    client.models.generate_content.side_effect = boom
+
+    # Act / Assert
+    with pytest.raises(RuntimeError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value is boom

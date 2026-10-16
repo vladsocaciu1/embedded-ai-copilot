@@ -15,6 +15,23 @@ client = genai.Client(api_key=settings.gemini_api_key)
 
 logger = logging.getLogger(__name__)
 
+
+class AIServiceError(Exception):
+    """Base error raised while generating an answer."""
+
+
+class ProjectLoadError(AIServiceError):
+    """The project path cannot be loaded."""
+
+
+class UpstreamRejectedError(AIServiceError):
+    """Gemini rejected the request (4xx)."""
+
+
+class UpstreamUnavailableError(AIServiceError):
+    """Gemini is unavailable (5xx or another API error)."""
+
+
 def generate_answer(question: str) -> str:
     """
     Generate an answer to the given question using Google's Gemini API.
@@ -31,9 +48,9 @@ def generate_answer(question: str) -> str:
     # Load project files from the specified project path
     try:
         project_files = load_project_files(project_path)
-    except ValueError:
+    except ValueError as e:
         logger.exception(f"Invalid project path: {project_path}")
-        return "Invalid project path."
+        raise ProjectLoadError("Project files could not be loaded.") from e
 
     logger.info(f"Loaded {len(project_files)} project files from {project_path}")
 
@@ -50,23 +67,19 @@ def generate_answer(question: str) -> str:
        
         logger.info("Received response from Gemini API.")
         return response.text
-    except errors.ClientError:
+    except errors.ClientError as e:
         # 4xx errors
         logger.exception(f"Client error.")
-        return "Client error occurred."
-    except errors.ServerError:
+        raise UpstreamRejectedError("AI provider rejected the request.") from e
+    except errors.ServerError as e:
         # 5xx errors (retry recommended)
         logger.exception(f"Server error.")
-        return "Server error occurred."
-    except errors.APIError:
+        raise UpstreamUnavailableError("AI provider is unavailable.") from e
+    except errors.APIError as e:
         # Any other API error
         logger.exception(f"API error.")
-        return "API error occurred."
-    except Exception:
-        # Catch-all for any other exceptions
-        logger.exception(f"Unexpected error.")
-        return "An unexpected error occurred."
-    
+        raise UpstreamUnavailableError("AI provider is unavailable.") from e
+
     finally:
         elapsed_time = (time.perf_counter() - start_time)*1000  # Convert to milliseconds
         logger.info(f"Gemini API request completed in {elapsed_time:.0f} milliseconds.")

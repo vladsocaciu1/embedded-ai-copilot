@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from app.project_loader import load_project_files
@@ -154,3 +156,31 @@ def test_load_project_files_reads_non_ascii_utf8(tmp_path):
     # Assert
     assert len(project_files) == 1
     assert project_files[0].content == content
+
+def test_load_project_files_skips_non_utf8_file(tmp_path):
+
+    # Arrange
+    (tmp_path / "good.c").write_text("int good = 1;\n", encoding="utf-8")
+    (tmp_path / "bad.c").write_bytes(b"\xff\xfe\xfa")
+
+    # Act
+    project_files = load_project_files(tmp_path)
+
+    # Assert
+    assert {project_file.path.name for project_file in project_files} == {"good.c"}
+
+def test_load_project_files_warns_on_non_utf8_file(tmp_path, caplog):
+
+    # Arrange
+    (tmp_path / "good.c").write_text("int good = 1;\n", encoding="utf-8")
+    (tmp_path / "bad.c").write_bytes(b"\xff\xfe\xfa")
+    caplog.set_level(logging.WARNING)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    assert any(
+        record.levelno == logging.WARNING and "bad.c" in record.getMessage()
+        for record in caplog.records
+    )
