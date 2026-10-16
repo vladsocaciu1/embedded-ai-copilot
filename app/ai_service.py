@@ -5,11 +5,13 @@ from pathlib import Path
 from google import genai
 from google.genai import errors
 
-from app.config import PROJECT_PATH, GEMINI_KEY, GEMINI_MODEL
+from app.config import load_settings
 from app.project_loader import load_project_files
 from app.prompts import build_assistant_prompt
 
-client = genai.Client(api_key=GEMINI_KEY)
+settings = load_settings()
+
+client = genai.Client(api_key=settings.gemini_api_key)
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ def generate_answer(question: str) -> str:
         str: The generated answer.
     """
     # Load project path
-    project_path = PROJECT_PATH
+    project_path = settings.project_path
 
     # Load project files from the specified project path
     try:
@@ -42,7 +44,7 @@ def generate_answer(question: str) -> str:
 
     try:
         response = client.models.generate_content(
-            model=GEMINI_MODEL,
+            model=settings.gemini_model,
             contents=prompt,
         )
        
