@@ -126,6 +126,10 @@ def test_load_settings_honors_dotenv_file(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+    # setenv then delenv so monkeypatch records the names. delenv on an
+    # absent var records nothing, and load_dotenv writes them into os.environ.
+    monkeypatch.setenv("GEMINI_API_KEY", "placeholder")
+    monkeypatch.setenv("GEMINI_MODEL", "placeholder")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
