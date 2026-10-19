@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 3 in progress (project map).
+Phase 3 in progress (index cache).
 
 ## Request path
 
@@ -15,15 +15,17 @@ flowchart LR
     ai_service --> config
     ai_service --> project_loader
     ai_service --> prompts
-    ai_service --> code_index
-    ai_service --> code_graph
+    ai_service --> index_cache
+    index_cache --> code_index
+    index_cache --> code_graph
     ai_service --> Gemini
 ```
 
 ## Modules
 
 - `app/main.py` is the HTTP layer. It serves `GET /` and `POST /ask`, checks the question, and maps service errors to status codes. It does not read the project or call Gemini.
-- `app/ai_service.py` orchestrates one answer: load files, runs the char pre-check, builds the index, graph and project map, counts tokens (retrying once without the map if the map pushed the prompt over budget), call Gemini, and raise `ProjectLoadError`, `ProjectTooLargeError` (413), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
+- `app/ai_service.py` orchestrates one answer: load files, runs the char pre-check, gets the index and graph from the cache, builds the project map, counts tokens (retrying once without the map if the map pushed the prompt over budget), call Gemini, and raise `ProjectLoadError`, `ProjectTooLargeError` (413), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
+- `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is rebuilt only when any file changed. It does not read the disk or call Gemini.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
@@ -68,7 +70,7 @@ Prompt order: instructions, project map, file/line count header, files sorted by
 
 ## Prompt budget
 
-Each answer calls Gemini's free `count_tokens` on the final prompt before `generate_content`. That adds one round trip. A prompt over the budget returns 413 and is never truncated. A prompt longer than 10 characters per allowed token is rejected without the `count_tokens` call. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. For a big repository, point `PROJECT_PATH` at one application or example. The character pre-check runs before indexing, so very large projects get their 413 without the parse cost. If the map pushes an otherwise fitting prompt over the budget, the map is dropped and the tokens are counted once more.
+Each answer calls Gemini's free `count_tokens` on the final prompt before `generate_content`. That adds one round trip. A prompt over the budget returns 413 and is never truncated. A prompt longer than 10 characters per allowed token is rejected without the `count_tokens` call. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. For a big repository, point `PROJECT_PATH` at one application or example. The character pre-check runs before indexing, so very large projects get their 413 without the parse cost. If the map pushes an otherwise fitting prompt over the budget, the map is dropped and the tokens are counted once more. The index and graph are cached in memory between requests and refreshed from the loaded files, so code edits are picked up without a restart.
 
 ## Run
 
@@ -163,6 +165,7 @@ There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitt
 │   ├── code_graph.py
 │   ├── code_index.py
 │   ├── config.py
+│   ├── index_cache.py
 │   ├── logging_config.py
 │   ├── main.py
 │   ├── models.py
@@ -187,6 +190,7 @@ There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitt
 │   ├── test_code_graph.py
 │   ├── test_code_index.py
 │   ├── test_config.py
+│   ├── test_index_cache.py
 │   ├── test_logging_startup.py
 │   ├── test_project_loader.py
 │   └── test_prompts.py
