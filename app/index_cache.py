@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from time import perf_counter
 
-from app.code_graph import CodeGraph, build_graph, update_graph
+from app.code_graph import CodeGraph, GraphUpdateTooLarge, build_graph, update_graph
 from app.code_index import build_index
 from app.models import FileSymbols, ProjectFile, ProjectIndex
 
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 INCREMENTAL_MIN_FILES = 200
 INCREMENTAL_SHARE_PCT = 2
+INCREMENTAL_MAX_INCLUDES = 5000
 
 
 class IndexCache:
@@ -75,8 +76,10 @@ class IndexCache:
                         parsed += 1
                     new_files[path] = (digest, symbols)
                     ordered.append(symbols)
-                same_paths = new_files.keys() == self._files.keys()
-                dropped = sum(path not in new_files for path in self._files)
+                dropped_paths = [
+                    path for path in self._files if path not in new_files
+                ]
+                dropped = len(dropped_paths)
                 self._files = new_files
                 index = ProjectIndex(files=tuple(ordered))
                 limit = max(
@@ -86,14 +89,27 @@ class IndexCache:
                 if (
                     self._graph is not None
                     and self._index is not None
-                    and same_paths
-                    and 0 < parsed <= limit
+                    and 0 < parsed + dropped <= limit
                 ):
                     changed_paths = [project_file.path for project_file in changed]
-                    graph = update_graph(
-                        self._graph, self._index, index, changed_paths
-                    )
-                    graph_state = "updated"
+                    changed_paths.extend(dropped_paths)
+                    try:
+                        graph = update_graph(
+                            self._graph,
+                            self._index,
+                            index,
+                            changed_paths,
+                            max_includes=INCREMENTAL_MAX_INCLUDES,
+                        )
+                        graph_state = "updated"
+                    except GraphUpdateTooLarge as error:
+                        logger.info(
+                            f"Graph update skipped: {error.includes} includes "
+                            f"to re-resolve (limit {INCREMENTAL_MAX_INCLUDES}); "
+                            "full build."
+                        )
+                        graph = build_graph(index)
+                        graph_state = "rebuilt"
                 else:
                     graph = build_graph(index)
                     graph_state = "rebuilt"

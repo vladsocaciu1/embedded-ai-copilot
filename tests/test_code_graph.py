@@ -7,10 +7,24 @@ from pathlib import Path
 
 import pytest
 
-from app.code_graph import CodeGraph, build_graph, update_graph
+from app.code_graph import (
+    CodeGraph,
+    GraphUpdateTooLarge,
+    _include_key,
+    build_graph,
+    update_graph,
+)
 from app.code_index import build_index
 from app.index_cache import IndexCache
-from app.models import Call, CallRef, FileSymbols, ProjectFile, ProjectIndex, SymbolKind
+from app.models import (
+    Call,
+    CallRef,
+    FileSymbols,
+    Include,
+    ProjectFile,
+    ProjectIndex,
+    SymbolKind,
+)
 from app.project_loader import load_project_files
 from tests.test_index_cache import _install_spies
 from tests.test_selection_eval import eval_files
@@ -790,6 +804,437 @@ def test_x1_seeded_random_edits_match_a_rebuild(monkeypatch):
         _index, graph = cache.get(Path("/x1"), project_files())
         assert spies.graph_calls == [], step
         assert len(spies.update_calls) == 1, step
+        assert previous.snapshot() == before, step
+        rebuilt = build_graph(build_index(project_files()))
+        assert graph.snapshot() == rebuilt.snapshot(), step
+
+
+def test_g6_update_graph_rejects_inconsistent_paths():
+    files = [
+        ProjectFile(Path("a.c"), "int a(void) { return 1; }\n"),
+        ProjectFile(Path("b.c"), "int b(void) { return 2; }\n"),
+    ]
+    index = build_index(files)
+    graph = build_graph(index)
+    only_a = build_index(files[:1])
+
+    with pytest.raises(ValueError):
+        update_graph(graph, only_a, index, [Path("b.c")])
+    with pytest.raises(ValueError):
+        update_graph(graph, index, only_a, [])
+    with pytest.raises(ValueError):
+        update_graph(graph, index, index, [Path("missing.c")])
+
+
+def test_g7_path_change_copies_tables_and_keeps_the_input():
+    files = [
+        ProjectFile(Path("src/a.c"), '#include "a.h"\nint a(void) { return 1; }\n'),
+        ProjectFile(Path("inc/a.h"), "void b(void);\n"),
+    ]
+    index = build_index(files)
+    graph = build_graph(index)
+    before = graph.snapshot()
+    new_files = [
+        files[0],
+        ProjectFile(Path("inc/b.h"), "void c(void);\n"),
+    ]
+    new_index = build_index(new_files)
+    updated = update_graph(
+        graph, index, new_index, [Path("inc/a.h"), Path("inc/b.h")]
+    )
+
+    assert graph.snapshot() == before
+    assert updated.snapshot() == build_graph(new_index).snapshot()
+    assert updated._by_parts is not graph._by_parts
+    assert updated._by_basename is not graph._by_basename
+    assert updated._lower_parts is not graph._lower_parts
+    assert updated._parent_parts is not graph._parent_parts
+    assert updated._by_stem_group is not graph._by_stem_group
+    assert updated._pairs is not graph._pairs
+    assert updated._paths is not graph._paths
+    assert updated._includers_by_key is not graph._includers_by_key
+
+
+def test_g8_rename_logs_added_and_removed(caplog):
+    index = build_index([ProjectFile(Path("a.c"), "int a(void) { return 1; }\n")])
+    graph = build_graph(index)
+    renamed = build_index([ProjectFile(Path("b.c"), "int a(void) { return 1; }\n")])
+    caplog.clear()
+    caplog.set_level(logging.INFO)
+    update_graph(graph, index, renamed, [Path("a.c"), Path("b.c")])
+
+    records = [record for record in caplog.records if record.levelno == logging.INFO]
+    assert len(records) == 1
+    assert records[0].getMessage().startswith(
+        "Graph updated: 2 files (1 added, 1 removed)"
+    )
+
+
+def test_g9_max_includes_rejects_before_patching():
+    files = [ProjectFile(Path("a.c"), "int a(void) { return 1; }\n")]
+    index = build_index(files)
+    graph = build_graph(index)
+    before = graph.snapshot()
+    new_index = build_index(files + [ProjectFile(Path("b.h"), '#include "a.h"\n')])
+
+    with pytest.raises(GraphUpdateTooLarge) as caught:
+        update_graph(graph, index, new_index, [Path("b.h")], max_includes=0)
+    assert caught.value.includes == 1
+    assert graph.snapshot() == before
+
+    updated = update_graph(graph, index, new_index, [Path("b.h")], max_includes=None)
+    assert updated.snapshot() == build_graph(new_index).snapshot()
+
+
+def test_g10_include_key_lists_each_file_once_per_key():
+    assert _include_key(Include("a/B.h", False, 1)) == "b.h"
+    assert _include_key(Include("x.h", True, 1)) == "x.h"
+    assert _include_key(Include("..\\inc\\U.H", False, 1)) == "u.h"
+    assert _include_key(Include("x/..", False, 1)) == ""
+    assert _include_key(Include("./", False, 1)) == ""
+
+    graph = _graph(("a.c", '#include "b.h"\n#include "B.H"\n#include "c.h"\n'))
+    assert graph._includers_by_key["b.h"] == frozenset({Path("a.c")})
+    assert graph._includers_by_key["c.h"] == frozenset({Path("a.c")})
+    assert set(graph._includers_by_key) == {"b.h", "c.h"}
+
+
+def _assert_path_update(
+    old_files: list[ProjectFile],
+    new_files: list[ProjectFile],
+    changed: list[Path],
+) -> CodeGraph:
+    old = build_index(old_files)
+    graph = build_graph(old)
+    before = graph.snapshot()
+    new = build_index(new_files)
+    updated = update_graph(graph, old, new, changed)
+    assert updated.snapshot() == build_graph(new).snapshot()
+    assert graph.snapshot() == before
+    return updated
+
+
+def _assert_add_and_remove(base: list[ProjectFile], extra: ProjectFile) -> None:
+    _assert_path_update(base, base + [extra], [extra.path])
+    _assert_path_update(base + [extra], base, [extra.path])
+
+
+def test_w1_wildcard_include_resolves_to_the_normalized_file():
+    base = [ProjectFile(Path("d/a.c"), '#include "x/.."\n')]
+    extra = ProjectFile(Path("D"), "int d;\n")
+    full = build_graph(build_index(base + [extra]))
+    assert _candidates(full, "d/a.c", "x/..") == (Path("D"),)
+    _assert_add_and_remove(base, extra)
+
+
+def test_w2_relative_hit_beats_a_nearer_suffix_match():
+    base = [
+        ProjectFile(Path("p/q/src/x.c"), '#include "../../h.h"\n'),
+        ProjectFile(Path("p/q/src/h.h"), "\n"),
+    ]
+    extra = ProjectFile(Path("p/h.h"), "\n")
+    full = build_graph(build_index(base + [extra]))
+    assert _candidates(full, "p/q/src/x.c", "../../h.h") == (Path("p/h.h"),)
+    _assert_add_and_remove(base, extra)
+
+
+def test_w3_case_variant_joins_a_relative_hit():
+    base = [
+        ProjectFile(Path("src/a.c"), '#include "b.h"\n'),
+        ProjectFile(Path("src/b.h"), "\n"),
+    ]
+    extra = ProjectFile(Path("src/B.h"), "\n")
+    full = build_graph(build_index(base + [extra]))
+    assert _candidates(full, "src/a.c", "b.h") == (Path("src/B.h"), Path("src/b.h"))
+    _assert_add_and_remove(base, extra)
+
+
+def test_w4_equal_score_header_is_ambiguous_and_a_farther_one_is_not(caplog):
+    base = [
+        ProjectFile(Path("lib/x.c"), '#include "conf.h"\n'),
+        ProjectFile(Path("p1/conf.h"), "\n"),
+    ]
+    extra = ProjectFile(Path("p2/conf.h"), "\n")
+    full = build_graph(build_index(base + [extra]))
+    assert _candidates(full, "lib/x.c", "conf.h") == (
+        Path("p1/conf.h"),
+        Path("p2/conf.h"),
+    )
+    _assert_add_and_remove(base, extra)
+
+    near_base = [
+        ProjectFile(Path("proj/src/a.c"), '#include "h.h"\n'),
+        ProjectFile(Path("proj/inc/h.h"), "\n"),
+    ]
+    farther = ProjectFile(Path("other/h.h"), "\n")
+    near = build_graph(build_index(near_base))
+    assert _candidates(near, "proj/src/a.c", "h.h") == (Path("proj/inc/h.h"),)
+    old = build_index(near_base)
+    graph = build_graph(old)
+    caplog.clear()
+    caplog.set_level(logging.INFO)
+    update_graph(graph, old, build_index(near_base + [farther]), [farther.path])
+    assert any(
+        "0 includes re-resolved" in record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
+    )
+    _assert_add_and_remove(near_base, farther)
+    assert _candidates(
+        build_graph(build_index(near_base + [farther])), "proj/src/a.c", "h.h"
+    ) == (Path("proj/inc/h.h"),)
+
+
+def test_w5_removing_the_nearest_candidate_falls_back():
+    source = ProjectFile(Path("proj/src/a.c"), '#include "h.h"\n')
+    near = ProjectFile(Path("proj/inc/h.h"), "\n")
+    far = ProjectFile(Path("other/h.h"), "\n")
+    full = build_graph(build_index([source, near, far]))
+    assert _candidates(full, "proj/src/a.c", "h.h") == (Path("proj/inc/h.h"),)
+    fallen = build_graph(build_index([source, far]))
+    assert _candidates(fallen, "proj/src/a.c", "h.h") == (Path("other/h.h"),)
+    _assert_add_and_remove([source, far], near)
+
+    kept = build_graph(build_index([source, near]))
+    assert _candidates(kept, "proj/src/a.c", "h.h") == (Path("proj/inc/h.h"),)
+    _assert_add_and_remove([source, near], far)
+
+
+def test_w6_pairs_follow_nearer_equal_and_fallback_headers():
+    source = ProjectFile(Path("proj/Src/uart.c"), "void uart(void) {}\n")
+    near = ProjectFile(Path("proj/Inc/uart.h"), "void uart(void);\n")
+    far = ProjectFile(Path("other/uart.h"), "void uart(void);\n")
+    equal = ProjectFile(Path("zzz/uart.h"), "void uart(void);\n")
+
+    with_far = build_graph(build_index([source, far]))
+    assert with_far.pair(source.path) == (far.path,)
+    with_near = build_graph(build_index([source, far, near]))
+    assert with_near.pair(source.path) == (near.path,)
+    _assert_add_and_remove([source, far], near)
+
+    with_equal = build_graph(build_index([source, far, equal]))
+    assert with_equal.pair(source.path) == (far.path, equal.path)
+    _assert_add_and_remove([source, far], equal)
+
+    fallen = build_graph(build_index([source, far]))
+    assert fallen.pair(source.path) == (far.path,)
+
+
+def _header_and_includer(files: list[ProjectFile]) -> tuple[ProjectFile, Path]:
+    graph = build_graph(build_index(files))
+    header = _most_included_header(files, graph)
+    includer = sorted(graph.included_by(header.path), key=lambda path: path.parts)[0]
+    return header, includer
+
+
+def _first_source_file(files: list[ProjectFile]) -> ProjectFile:
+    sources = [
+        project_file
+        for project_file in files
+        if project_file.path.suffix.lower() in _SOURCE_SUFFIXES
+    ]
+    sources.sort(key=lambda project_file: project_file.path.parts)
+    return sources[0]
+
+
+def _replaced_path(
+    files: list[ProjectFile], old: Path, new: Path
+) -> list[ProjectFile]:
+    return [
+        ProjectFile(new if project_file.path == old else project_file.path, project_file.content)
+        for project_file in files
+    ]
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p1_add_unique_file_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    added = ProjectFile(
+        Path("zz_new/zz_unique.c"), "int zz_unique(void) { return 1; }\n"
+    )
+    _assert_path_update(files, files + [added], [added.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p2_remove_most_included_header_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    header, _includer = _header_and_includer(files)
+    kept = [project_file for project_file in files if project_file.path != header.path]
+    _assert_path_update(files, kept, [header.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p3_add_header_name_beside_the_includer_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    header, includer = _header_and_includer(files)
+    added = ProjectFile(
+        includer.parent / "zz_other" / header.path.name,
+        "int zz_other(void);\n",
+    )
+    _assert_path_update(files, files + [added], [added.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p4_add_header_in_the_includer_directory_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    header, includer = _header_and_includer(files)
+    path = includer.parent / header.path.name
+    if any(project_file.path == path for project_file in files):
+        pytest.skip("header name already exists in the includer directory")
+    added = ProjectFile(path, "int zz_relative(void);\n")
+    _assert_path_update(files, files + [added], [added.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p5_rename_header_in_place_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    header, _includer = _header_and_includer(files)
+    renamed = header.path.with_name("zz_" + header.path.name)
+    _assert_path_update(files, _replaced_path(files, header.path, renamed), [header.path, renamed])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p6_move_header_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    header, _includer = _header_and_includer(files)
+    moved = Path("zz_moved") / header.path.name
+    _assert_path_update(files, _replaced_path(files, header.path, moved), [header.path, moved])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p7_add_file_for_an_unresolved_include_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    graph = build_graph(build_index(files))
+    unresolved = []
+    for project_file in files:
+        for item in graph.includes(project_file.path):
+            if item.candidates:
+                continue
+            parts = tuple(
+                part
+                for part in item.include.target.replace("\\", "/").split("/")
+                if part and part not in {".", ".."}
+            )
+            if not parts:
+                continue
+            unresolved.append((project_file.path, item.include.target, parts[-1]))
+    if not unresolved:
+        pytest.skip("no unresolved include")
+    unresolved.sort()
+    name = unresolved[0][2]
+    path = Path(name)
+    if any(project_file.path == path for project_file in files):
+        path = Path("zz_resolved") / name
+    added = ProjectFile(path, "int zz_resolved(void);\n")
+    _assert_path_update(files, files + [added], [added.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p8_add_pair_header_and_remove_source_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    source = _first_source_file(files)
+    added = ProjectFile(Path("zz_pair") / f"{source.path.stem}.h", "int zz_pair(void);\n")
+    kept = [
+        project_file for project_file in files if project_file.path != source.path
+    ]
+    _assert_path_update(files, kept + [added], [source.path, added.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p9_add_upper_case_header_name_matches_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    header, _includer = _header_and_includer(files)
+    added = ProjectFile(
+        Path("ZZ_case") / header.path.name.upper(),
+        "int zz_case(void);\n",
+    )
+    _assert_path_update(files, files + [added], [added.path])
+
+
+@pytest.mark.parametrize("fixture_name", ["sample_project", "eval", "graph"])
+def test_p10_edit_remove_and_add_match_rebuild(fixture_name):
+    files = _fixture_files(fixture_name)
+    source = _first_source_file(files)
+    header, _includer = _header_and_includer(files)
+    added = ProjectFile(Path("zz_p10/zz_added.c"), "int zz_added(void) { return 1; }\n")
+    new_files = []
+    for project_file in files:
+        if project_file.path == header.path:
+            continue
+        if project_file.path == source.path:
+            new_files.append(
+                ProjectFile(
+                    project_file.path,
+                    project_file.content + "\nvoid zz_p10(void) { }\n",
+                )
+            )
+        else:
+            new_files.append(project_file)
+    new_files.append(added)
+    _assert_path_update(
+        files, new_files, [source.path, header.path, added.path]
+    )
+
+
+_X2_EXTRA = (
+    "src/new.h",
+    "inc/main.h",
+    "lib/x/can.h",
+    "app/ui.hpp",
+    "drivers/can/util.c",
+    "Can.H",
+    "src/sub/app.hpp",
+    "inc/missing.h",
+    "app/sub/ui.h",
+    "zz/README.txt",
+)
+
+
+def test_x2_seeded_random_path_changes_match_a_rebuild(monkeypatch):
+    rng = random.Random(20261020)
+    pool = [Path(path) for path in (*_X1_PATHS, *_X2_EXTRA)]
+    present = {}
+    for path in pool:
+        if rng.random() < 0.6:
+            present[path] = _x1_file(rng, path)
+
+    def project_files() -> list[ProjectFile]:
+        return [ProjectFile(path, present[path]) for path in pool if path in present]
+
+    cache = IndexCache()
+    _index, graph = cache.get(Path("/x2"), project_files())
+    spies = _install_spies(monkeypatch)
+    for step in range(300):
+        before = graph.snapshot()
+        previous = graph
+        before_present = dict(present)
+        for _op in range(rng.randint(1, 3)):
+            roll = rng.random()
+            if roll < 0.40:
+                path = rng.choice(pool)
+                generated = _x1_file(rng, path)
+                if path in present and generated == present[path]:
+                    generated += "/* step */"
+                present[path] = generated
+            elif roll < 0.70:
+                if len(present) <= 1:
+                    continue
+                del present[rng.choice(list(present))]
+            else:
+                absent = [path for path in pool if path not in present]
+                if not present or not absent:
+                    continue
+                src = rng.choice(list(present))
+                dst = rng.choice(absent)
+                present[dst] = present.pop(src)
+        spies.graph_calls.clear()
+        spies.update_calls.clear()
+        _index, graph = cache.get(Path("/x2"), project_files())
+        assert spies.graph_calls == [], step
+        if present == before_present:
+            assert spies.update_calls == [], step
+        else:
+            assert len(spies.update_calls) == 1, step
         assert previous.snapshot() == before, step
         rebuilt = build_graph(build_index(project_files()))
         assert graph.snapshot() == rebuilt.snapshot(), step

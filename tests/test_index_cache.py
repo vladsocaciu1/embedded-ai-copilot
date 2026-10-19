@@ -50,9 +50,9 @@ def _install_spies(monkeypatch) -> _Spies:
         spies.graph_calls.append(index)
         return build_graph(index)
 
-    def spy_update(graph, old_index, new_index, changed):
+    def spy_update(graph, old_index, new_index, changed, **kwargs):
         spies.update_calls.append((new_index, changed))
-        return update_graph(graph, old_index, new_index, changed)
+        return update_graph(graph, old_index, new_index, changed, **kwargs)
 
     monkeypatch.setattr(index_cache_module, "build_index", spy_index)
     monkeypatch.setattr(index_cache_module, "build_graph", spy_graph)
@@ -157,7 +157,9 @@ def test_c6_delete_rebuilds_graph_without_parsing(monkeypatch, caplog):
     index, graph = cache.get(PROJECT, [main])
 
     assert spies.index_calls == []
-    assert len(spies.graph_calls) == 1
+    assert spies.graph_calls == []
+    assert len(spies.update_calls) == 1
+    assert spies.update_calls[0][1] == [Path("helper.h")]
     assert [file_symbols.path for file_symbols in index.files] == [Path("main.c")]
     assert graph.includes(Path("main.c"))[0].candidates == ()
     assert any("1 dropped" in record.message for record in caplog.records)
@@ -273,32 +275,36 @@ def test_k1_limit_updates_then_rebuilds(monkeypatch, caplog):
     assert any("graph rebuilt" in record.message for record in caplog.records)
 
 
-def test_k2_add_delete_rename_do_not_update(monkeypatch):
+def test_k2_add_delete_rename_update(monkeypatch):
     main = ProjectFile(path=Path("main.c"), content='#include "new.h"\n')
     cache = IndexCache()
     cache.get(PROJECT, [main])
     spies = _install_spies(monkeypatch)
     added = ProjectFile(path=Path("inc/new.h"), content="int added(void);\n")
-    cache.get(PROJECT, [main, added])
-    assert spies.update_calls == []
-    assert spies.graph_calls
+    index, graph = cache.get(PROJECT, [main, added])
+    assert [call[1] for call in spies.update_calls] == [[Path("inc/new.h")]]
+    assert spies.graph_calls == []
+    _equals_uncached(index, graph, [main, added])
 
     main = ProjectFile(path=Path("main.c"), content='#include "helper.h"\n')
     helper = ProjectFile(path=Path("helper.h"), content="int helper(void);\n")
     cache = IndexCache()
     cache.get(PROJECT, [main, helper])
     spies = _install_spies(monkeypatch)
-    cache.get(PROJECT, [main])
-    assert spies.update_calls == []
-    assert spies.graph_calls
+    index, graph = cache.get(PROJECT, [main])
+    assert [call[1] for call in spies.update_calls] == [[Path("helper.h")]]
+    assert spies.graph_calls == []
+    _equals_uncached(index, graph, [main])
 
     content = "int renamed(void) { return 1; }\n"
     cache = IndexCache()
     cache.get(PROJECT, _files(("old.c", content)))
     spies = _install_spies(monkeypatch)
-    cache.get(PROJECT, [ProjectFile(path=Path("new.c"), content=content)])
-    assert spies.update_calls == []
-    assert spies.graph_calls
+    renamed = ProjectFile(path=Path("new.c"), content=content)
+    index, graph = cache.get(PROJECT, [renamed])
+    assert [call[1] for call in spies.update_calls] == [[Path("new.c"), Path("old.c")]]
+    assert spies.graph_calls == []
+    _equals_uncached(index, graph, [renamed])
 
 
 def test_k3_reorder_rebuilds_with_nothing_parsed(monkeypatch, caplog):
@@ -328,6 +334,66 @@ def test_k4_project_change_rebuilds(monkeypatch):
     cache.get(Path("/q"), files)
     assert spies.update_calls == []
     assert len(spies.graph_calls) == 1
+
+
+def test_k6_limit_counts_parsed_plus_dropped(monkeypatch, caplog):
+    monkeypatch.setattr(index_cache_module, "INCREMENTAL_MIN_FILES", 2)
+    files = _files(
+        ("a.c", "int a(void) { return 1; }\n"),
+        ("b.c", "int b(void) { return 2; }\n"),
+        ("c.c", "int c(void) { return 3; }\n"),
+        ("d.c", "int d(void) { return 4; }\n"),
+    )
+    cache = IndexCache()
+    cache.get(PROJECT, files)
+    spies = _install_spies(monkeypatch)
+    cache.get(
+        PROJECT,
+        [
+            ProjectFile(Path("e.c"), files[0].content),
+            files[1],
+            files[2],
+            files[3],
+        ],
+    )
+    assert spies.graph_calls == []
+    assert len(spies.update_calls) == 1
+
+    spies = _install_spies(monkeypatch)
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    cache.get(
+        PROJECT,
+        [
+            ProjectFile(Path("f.c"), files[0].content),
+            ProjectFile(Path("g.c"), files[1].content),
+            files[2],
+            files[3],
+        ],
+    )
+    assert spies.update_calls == []
+    assert len(spies.graph_calls) == 1
+    assert any("graph rebuilt" in record.message for record in caplog.records)
+
+
+def test_k7_include_cap_falls_back_to_a_full_build(monkeypatch, caplog):
+    monkeypatch.setattr(index_cache_module, "INCREMENTAL_MAX_INCLUDES", 0)
+    main = ProjectFile(path=Path("main.c"), content='#include "helper.h"\n')
+    cache = IndexCache()
+    cache.get(PROJECT, [main])
+    spies = _install_spies(monkeypatch)
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    added = ProjectFile(path=Path("helper.h"), content="int helper(void);\n")
+
+    index, graph = cache.get(PROJECT, [main, added])
+
+    assert len(spies.update_calls) == 1
+    assert len(spies.graph_calls) == 1
+    messages = [record.message for record in caplog.records]
+    assert any("Graph update skipped" in message for message in messages)
+    assert any("graph rebuilt" in message for message in messages)
+    _equals_uncached(index, graph, [main, added])
 
 
 def test_k5_old_graph_stays_and_hit_returns_the_updated_graph():

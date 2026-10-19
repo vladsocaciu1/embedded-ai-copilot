@@ -1,11 +1,12 @@
 import logging
 import posixpath
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from pathlib import Path
 from time import perf_counter
 
 from app.models import (
     CallRef,
+    FileSymbols,
     Include,
     ProjectIndex,
     ResolvedInclude,
@@ -14,6 +15,13 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class GraphUpdateTooLarge(Exception):
+    def __init__(self, *, includes: int) -> None:
+        super().__init__(f"{includes} includes to re-resolve")
+        self.includes = includes
+
 
 _SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
@@ -62,6 +70,7 @@ class CodeGraph:
         lower_parts: dict[Path, tuple[str, ...]],
         parent_parts: dict[Path, tuple[str, ...]],
         by_stem_group: dict[tuple[str, str], tuple[Path, ...]],
+        includers_by_key: dict[str, frozenset[Path]],
     ) -> None:
         self._definitions = definitions
         self._calls_by_callee = calls_by_callee
@@ -75,6 +84,7 @@ class CodeGraph:
         self._lower_parts = lower_parts
         self._parent_parts = parent_parts
         self._by_stem_group = by_stem_group
+        self._includers_by_key = includers_by_key
 
     def definitions(
         self, name: str, from_path: Path | None = None
@@ -116,6 +126,7 @@ class CodeGraph:
             "includes": dict(self._includes),
             "included_by": dict(self._included_by),
             "pairs": dict(self._pairs),
+            "includers_by_key": dict(self._includers_by_key),
             "by_parts": dict(self._by_parts),
             "by_basename": dict(self._by_basename),
             "lower_parts": dict(self._lower_parts),
@@ -130,16 +141,42 @@ def update_graph(
     old_index: ProjectIndex,
     new_index: ProjectIndex,
     changed: Collection[Path],
+    *,
+    max_includes: int | None = None,
 ) -> CodeGraph:
-    new_paths = {file.path for file in new_index.files}
     old_paths = {file.path for file in old_index.files}
-    if not (new_paths == graph._paths == old_paths):
-        raise ValueError("path set must be unchanged")
+    new_paths = {file.path for file in new_index.files}
+    if old_paths != graph._paths:
+        raise ValueError("old index paths must match the graph")
     changed_paths = frozenset(changed)
-    if not changed_paths <= graph._paths:
-        raise ValueError("changed paths must belong to the graph")
+    if not changed_paths <= old_paths | new_paths:
+        raise ValueError("changed paths must belong to the old or new index")
+    added = frozenset(new_paths - old_paths)
+    removed = frozenset(old_paths - new_paths)
+    if not added | removed <= changed_paths:
+        raise ValueError("added and removed paths must be in changed")
 
     started = perf_counter()
+    (
+        by_parts,
+        by_basename,
+        lower_parts,
+        parent_parts,
+        by_stem_group,
+        paths,
+    ) = _patched_path_tables(graph, added, removed, new_paths)
+    partial, include_count = _select_includes(
+        graph,
+        new_index,
+        changed_paths,
+        added,
+        removed,
+        lower_parts,
+        parent_parts,
+    )
+    if max_includes is not None and include_count > max_includes:
+        raise GraphUpdateTooLarge(includes=include_count)
+
     definitions, definition_names = _patch_definitions(
         graph, old_index, new_index, changed_paths
     )
@@ -157,8 +194,19 @@ def update_graph(
         changed_paths,
         by_callee=False,
     )
-    includes, included_by, include_count = _patch_includes(
-        graph, new_index, changed_paths
+    includes, included_by = _apply_includes(
+        graph,
+        new_index,
+        changed_paths,
+        removed,
+        partial,
+        by_parts,
+        by_basename,
+        lower_parts,
+        parent_parts,
+    )
+    pairs, pair_count = _patched_pairs(
+        graph, added, removed, by_stem_group, parent_parts
     )
     updated = CodeGraph(
         definitions=definitions,
@@ -166,19 +214,24 @@ def update_graph(
         calls_by_caller=calls_by_caller,
         includes=includes,
         included_by=included_by,
-        pairs=graph._pairs,
-        paths=graph._paths,
-        by_parts=graph._by_parts,
-        by_basename=graph._by_basename,
-        lower_parts=graph._lower_parts,
-        parent_parts=graph._parent_parts,
-        by_stem_group=graph._by_stem_group,
+        pairs=pairs,
+        paths=paths,
+        by_parts=by_parts,
+        by_basename=by_basename,
+        lower_parts=lower_parts,
+        parent_parts=parent_parts,
+        by_stem_group=by_stem_group,
+        includers_by_key=_patched_includers(
+            graph, old_index, new_index, changed_paths
+        ),
     )
     elapsed_ms = round((perf_counter() - started) * 1000)
     logger.info(
-        f"Graph updated: {len(changed_paths)} files, "
+        f"Graph updated: {len(changed_paths)} files "
+        f"({len(added)} added, {len(removed)} removed), "
         f"{len(definition_names | callee_names | caller_names)} names, "
-        f"{include_count} includes re-resolved in {elapsed_ms} ms."
+        f"{include_count} includes re-resolved, "
+        f"{pair_count} pairs recomputed in {elapsed_ms} ms."
     )
     return updated
 
@@ -218,6 +271,7 @@ def _assemble(index: ProjectIndex) -> CodeGraph:
         lower_parts=lower_parts,
         parent_parts=parent_parts,
         by_stem_group=stem_group_table,
+        includers_by_key=_includers_by_key(index),
     )
 
 
@@ -283,12 +337,12 @@ def _patch_calls(
     return table, names
 
 
-def _merge_refs(
-    table: dict[str, tuple[object, ...]],
+def _merge_refs[R: (SymbolRef, CallRef)](
+    table: dict[str, tuple[R, ...]],
     names: set[str],
     changed_paths: frozenset[Path],
-    new_refs,
-    sort_key,
+    new_refs: Callable[[str], list[R]],
+    sort_key: Callable[[R], tuple[tuple[str, ...], int]],
 ) -> None:
     for name in names:
         merged = [
@@ -326,60 +380,403 @@ def _call_names(
     return names
 
 
-def _patch_includes(
+def _includers_by_key(index: ProjectIndex) -> dict[str, frozenset[Path]]:
+    grouped: dict[str, set[Path]] = {}
+    for file in index.files:
+        for include in file.includes:
+            grouped.setdefault(_include_key(include), set()).add(file.path)
+    return {key: frozenset(paths) for key, paths in grouped.items()}
+
+
+def _include_key(include: Include) -> str:
+    parts = _target_parts(include.target)
+    if not parts or parts[-1] in {".", ".."}:
+        return ""
+    return parts[-1].lower()
+
+
+def _patched_path_tables(
+    graph: CodeGraph,
+    added: frozenset[Path],
+    removed: frozenset[Path],
+    new_paths: set[Path],
+) -> tuple[
+    dict[tuple[str, ...], tuple[Path, ...]],
+    dict[str, tuple[Path, ...]],
+    dict[Path, tuple[str, ...]],
+    dict[Path, tuple[str, ...]],
+    dict[tuple[str, str], tuple[Path, ...]],
+    frozenset[Path],
+]:
+    if not added and not removed:
+        return (
+            graph._by_parts,
+            graph._by_basename,
+            graph._lower_parts,
+            graph._parent_parts,
+            graph._by_stem_group,
+            graph._paths,
+        )
+    by_parts = dict(graph._by_parts)
+    by_basename = dict(graph._by_basename)
+    lower_parts = dict(graph._lower_parts)
+    parent_parts = dict(graph._parent_parts)
+    by_stem_group = dict(graph._by_stem_group)
+    for path in removed:
+        _remove_indexed_path(
+            path, by_parts, by_basename, lower_parts, parent_parts, by_stem_group
+        )
+    for path in added:
+        _add_indexed_path(
+            path, by_parts, by_basename, lower_parts, parent_parts, by_stem_group
+        )
+    return (
+        by_parts,
+        by_basename,
+        lower_parts,
+        parent_parts,
+        by_stem_group,
+        frozenset(new_paths),
+    )
+
+
+def _add_indexed_path(
+    path: Path,
+    by_parts: dict[tuple[str, ...], tuple[Path, ...]],
+    by_basename: dict[str, tuple[Path, ...]],
+    lower_parts: dict[Path, tuple[str, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
+    by_stem_group: dict[tuple[str, str], tuple[Path, ...]],
+) -> None:
+    parts = tuple(part.lower() for part in path.parts)
+    lower_parts[path] = parts
+    parent_parts[path] = parts[:-1]
+    _insert_grouped(by_parts, parts, path)
+    _insert_grouped(by_basename, path.name.lower(), path)
+    group = _pair_group(path)
+    if group is not None:
+        _insert_grouped(by_stem_group, (path.stem.lower(), group), path)
+
+
+def _remove_indexed_path(
+    path: Path,
+    by_parts: dict[tuple[str, ...], tuple[Path, ...]],
+    by_basename: dict[str, tuple[Path, ...]],
+    lower_parts: dict[Path, tuple[str, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
+    by_stem_group: dict[tuple[str, str], tuple[Path, ...]],
+) -> None:
+    parts = lower_parts.pop(path)
+    parent_parts.pop(path)
+    _drop_grouped(by_parts, parts, path)
+    _drop_grouped(by_basename, path.name.lower(), path)
+    group = _pair_group(path)
+    if group is not None:
+        _drop_grouped(by_stem_group, (path.stem.lower(), group), path)
+
+
+def _insert_grouped(table: dict[object, tuple[Path, ...]], key: object, path: Path) -> None:
+    current = table.get(key, ())
+    parts = path.parts
+    for index, item in enumerate(current):
+        if item.parts > parts:
+            table[key] = current[:index] + (path,) + current[index:]
+            return
+    table[key] = current + (path,)
+
+
+def _drop_grouped(table: dict[object, tuple[Path, ...]], key: object, path: Path) -> None:
+    current = table.get(key)
+    if current is None:
+        return
+    updated = tuple(item for item in current if item != path)
+    if updated:
+        table[key] = updated
+    else:
+        del table[key]
+
+
+def _select_includes(
     graph: CodeGraph,
     new_index: ProjectIndex,
     changed_paths: frozenset[Path],
+    added: frozenset[Path],
+    removed: frozenset[Path],
+    lower_parts: dict[Path, tuple[str, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
+) -> tuple[dict[Path, tuple[int, ...]], int]:
+    new_by_path = {file.path: file for file in new_index.files}
+    count = 0
+    for path in changed_paths:
+        file = new_by_path.get(path)
+        if file is not None:
+            count += len(file.includes)
+    if not added and not removed:
+        return {}, count
+
+    keys = {path.name.lower() for path in added | removed}
+    keys.add("")
+    dependents: set[Path] = set()
+    for key in keys:
+        dependents.update(graph._includers_by_key.get(key, ()))
+    dependents -= changed_paths
+    added_by_key: dict[str, list[Path]] = {}
+    for path in added:
+        added_by_key.setdefault(path.name.lower(), []).append(path)
+    partial: dict[Path, tuple[int, ...]] = {}
+    for path in dependents:
+        chosen: list[int] = []
+        for index, item in enumerate(graph._includes.get(path, ())):
+            key = _include_key(item.include)
+            if key not in keys:
+                continue
+            if _include_may_change(
+                item,
+                path,
+                added_by_key.get(key, ()),
+                removed,
+                graph._by_parts,
+                lower_parts,
+                parent_parts,
+            ):
+                chosen.append(index)
+        if chosen:
+            partial[path] = tuple(chosen)
+            count += len(chosen)
+    return partial, count
+
+
+def _include_may_change(
+    item: ResolvedInclude,
+    including: Path,
+    added_with_key: Collection[Path],
+    removed: frozenset[Path],
+    old_by_parts: dict[tuple[str, ...], tuple[Path, ...]],
+    lower_parts: dict[Path, tuple[str, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
+) -> bool:
+    include = item.include
+    if _include_key(include) == "":
+        return True
+    candidates = item.candidates
+    if any(candidate in removed for candidate in candidates):
+        return True
+    if not added_with_key:
+        return False
+    relative = (
+        None
+        if include.is_system
+        else _relative_key(including, include.target)
+    )
+    if any(lower_parts[path] == relative for path in added_with_key):
+        return True
+    if relative in old_by_parts:
+        return False
+    parts = _target_parts(include.target)
+    tail = tuple(part.lower() for part in parts if part not in {".", ".."})
+    best = (
+        _prefix_len(parent_parts[including], parent_parts[candidates[0]])
+        if candidates
+        else -1
+    )
+    return any(
+        _ends_with(lower_parts[path], tail)
+        and _prefix_len(parent_parts[including], parent_parts[path]) >= best
+        for path in added_with_key
+    )
+
+
+def _apply_includes(
+    graph: CodeGraph,
+    new_index: ProjectIndex,
+    changed_paths: frozenset[Path],
+    removed: frozenset[Path],
+    partial: dict[Path, tuple[int, ...]],
+    by_parts: dict[tuple[str, ...], tuple[Path, ...]],
+    by_basename: dict[str, tuple[Path, ...]],
+    lower_parts: dict[Path, tuple[str, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
 ) -> tuple[
     dict[Path, tuple[ResolvedInclude, ...]],
     dict[Path, tuple[Path, ...]],
-    int,
 ]:
+    if not changed_paths and not partial:
+        return graph._includes, graph._included_by
+
     includes = dict(graph._includes)
     included_by = dict(graph._included_by)
+    re_resolved: set[Path] = set()
     touched: set[Path] = set()
-    include_count = 0
-    for file in new_index.files:
-        if file.path not in changed_paths:
+    inverted: dict[Path, set[Path]] = {}
+    for path in removed:
+        for item in includes.pop(path, ()):
+            touched.update(item.candidates)
+        touched.add(path)
+
+    new_by_path = {file.path: file for file in new_index.files}
+    for path in changed_paths:
+        file = new_by_path.get(path)
+        if file is None:
             continue
-        resolved = tuple(
-            ResolvedInclude(
-                include=include,
-                candidates=_resolve_include(
-                    include,
-                    file.path,
-                    graph._by_parts,
-                    graph._by_basename,
-                    graph._lower_parts,
-                    graph._parent_parts,
-                ),
-            )
-            for include in file.includes
+        resolved = _resolve_file_includes(
+            file, by_parts, by_basename, lower_parts, parent_parts
         )
-        include_count += len(file.includes)
-        for item in graph._includes[file.path]:
+        for item in graph._includes.get(path, ()):
             touched.update(item.candidates)
         for item in resolved:
             touched.update(item.candidates)
-        includes[file.path] = resolved
-    for target in touched:
-        includers = {
-            path
-            for path in graph._included_by.get(target, ())
-            if path not in changed_paths
-        }
-        for path in changed_paths:
-            for item in includes[path]:
-                if target in item.candidates:
-                    includers.add(path)
-                    break
-        if includers:
-            included_by[target] = tuple(
-                sorted(includers, key=lambda path: path.parts)
+            for candidate in item.candidates:
+                inverted.setdefault(candidate, set()).add(path)
+        includes[path] = resolved
+        re_resolved.add(path)
+
+    for path, indexes in partial.items():
+        old_items = graph._includes[path]
+        new_items = list(old_items)
+        for index in indexes:
+            include = old_items[index].include
+            new_items[index] = ResolvedInclude(
+                include=include,
+                candidates=_resolve_include(
+                    include,
+                    path,
+                    by_parts,
+                    by_basename,
+                    lower_parts,
+                    parent_parts,
+                ),
             )
+        resolved = tuple(new_items)
+        if resolved == old_items:
+            continue
+        for index in indexes:
+            touched.update(old_items[index].candidates)
+            touched.update(resolved[index].candidates)
+        for item in resolved:
+            for candidate in item.candidates:
+                inverted.setdefault(candidate, set()).add(path)
+        includes[path] = resolved
+        re_resolved.add(path)
+
+    for target in touched:
+        kept = {
+            path
+            for path in included_by.get(target, ())
+            if path not in re_resolved and path not in removed
+        }
+        kept.update(inverted.get(target, ()))
+        if kept:
+            included_by[target] = tuple(sorted(kept, key=lambda item: item.parts))
         else:
             included_by.pop(target, None)
-    return includes, included_by, include_count
+    return includes, included_by
+
+
+def _patched_pairs(
+    graph: CodeGraph,
+    added: frozenset[Path],
+    removed: frozenset[Path],
+    by_stem_group: dict[tuple[str, str], tuple[Path, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
+) -> tuple[dict[Path, tuple[Path, ...]], int]:
+    if not added and not removed:
+        return graph._pairs, 0
+    pairs = dict(graph._pairs)
+    recomputed = 0
+    for path in removed:
+        pairs.pop(path, None)
+    for path in added:
+        pairs[path] = _pair_paths(path, by_stem_group, parent_parts)
+        recomputed += 1
+
+    affected: set[Path] = set()
+    for path in added | removed:
+        group = _pair_group(path)
+        if group is None:
+            continue
+        opposite = "header" if group == "source" else "source"
+        for other in by_stem_group.get((path.stem.lower(), opposite), ()):
+            if other not in added:
+                affected.add(other)
+    added_grouped: dict[tuple[str, str], list[Path]] = {}
+    for path in added:
+        group = _pair_group(path)
+        if group is None:
+            continue
+        added_grouped.setdefault((path.stem.lower(), group), []).append(path)
+    for path in affected:
+        old = graph._pairs.get(path, ())
+        if _pair_may_change(path, old, removed, added_grouped, parent_parts):
+            pairs[path] = _pair_paths(path, by_stem_group, parent_parts)
+            recomputed += 1
+    return pairs, recomputed
+
+
+def _pair_may_change(
+    path: Path,
+    old: tuple[Path, ...],
+    removed: frozenset[Path],
+    added_grouped: dict[tuple[str, str], list[Path]],
+    parent_parts: dict[Path, tuple[str, ...]],
+) -> bool:
+    if any(candidate in removed for candidate in old):
+        return True
+    group = _pair_group(path)
+    if group is None:
+        return False
+    wanted = "header" if group == "source" else "source"
+    added_paths = added_grouped.get((path.stem.lower(), wanted), ())
+    if not added_paths:
+        return False
+    best = _prefix_len(parent_parts[path], parent_parts[old[0]]) if old else -1
+    return any(
+        _prefix_len(parent_parts[path], parent_parts[added]) >= best
+        for added in added_paths
+    )
+
+
+def _patched_includers(
+    graph: CodeGraph,
+    old_index: ProjectIndex,
+    new_index: ProjectIndex,
+    changed_paths: frozenset[Path],
+) -> dict[str, frozenset[Path]]:
+    if not changed_paths:
+        return graph._includers_by_key
+    table = dict(graph._includers_by_key)
+    old_files = {file.path: file for file in old_index.files}
+    new_files = {file.path: file for file in new_index.files}
+    for path in changed_paths:
+        old_file = old_files.get(path)
+        if old_file is not None:
+            for key in {_include_key(include) for include in old_file.includes}:
+                _drop_includer(table, key, path)
+        new_file = new_files.get(path)
+        if new_file is not None:
+            for key in {_include_key(include) for include in new_file.includes}:
+                _add_includer(table, key, path)
+    return table
+
+
+def _drop_includer(
+    table: dict[str, frozenset[Path]], key: str, path: Path
+) -> None:
+    current = table.get(key)
+    if current is None or path not in current:
+        return
+    updated = current - {path}
+    if updated:
+        table[key] = updated
+    else:
+        del table[key]
+
+
+def _add_includer(
+    table: dict[str, frozenset[Path]], key: str, path: Path
+) -> None:
+    current = table.get(key, frozenset())
+    if path not in current:
+        table[key] = current | {path}
 
 
 def _definition_table(index: ProjectIndex) -> dict[str, tuple[SymbolRef, ...]]:
@@ -426,19 +823,8 @@ def _include_tables(
     includes: dict[Path, tuple[ResolvedInclude, ...]] = {}
     included_by: dict[Path, list[Path]] = {}
     for file in index.files:
-        resolved = tuple(
-            ResolvedInclude(
-                include=include,
-                candidates=_resolve_include(
-                    include,
-                    file.path,
-                    by_parts,
-                    by_basename,
-                    lower_parts,
-                    parent_parts,
-                ),
-            )
-            for include in file.includes
+        resolved = _resolve_file_includes(
+            file, by_parts, by_basename, lower_parts, parent_parts
         )
         includes[file.path] = resolved
         for item in resolved:
@@ -459,6 +845,29 @@ def _pair_table(
         file.path: _pair_paths(file.path, by_stem_group, parent_parts)
         for file in index.files
     }
+
+
+def _resolve_file_includes(
+    file: FileSymbols,
+    by_parts: dict[tuple[str, ...], tuple[Path, ...]],
+    by_basename: dict[str, tuple[Path, ...]],
+    lower_parts: dict[Path, tuple[str, ...]],
+    parent_parts: dict[Path, tuple[str, ...]],
+) -> tuple[ResolvedInclude, ...]:
+    return tuple(
+        ResolvedInclude(
+            include=include,
+            candidates=_resolve_include(
+                include,
+                file.path,
+                by_parts,
+                by_basename,
+                lower_parts,
+                parent_parts,
+            ),
+        )
+        for include in file.includes
+    )
 
 
 def _resolve_include(
