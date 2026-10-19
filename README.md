@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 3 in progress (code index, relations).
+Phase 3 in progress (project map).
 
 ## Request path
 
@@ -15,19 +15,21 @@ flowchart LR
     ai_service --> config
     ai_service --> project_loader
     ai_service --> prompts
+    ai_service --> code_index
+    ai_service --> code_graph
     ai_service --> Gemini
 ```
 
 ## Modules
 
 - `app/main.py` is the HTTP layer. It serves `GET /` and `POST /ask`, checks the question, and maps service errors to status codes. It does not read the project or call Gemini.
-- `app/ai_service.py` orchestrates one answer: load files, build the prompt, checks the prompt against the token budget, call Gemini, and raise `ProjectLoadError`, `ProjectTooLargeError` (413), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
+- `app/ai_service.py` orchestrates one answer: load files, runs the char pre-check, builds the index, graph and project map, counts tokens (retrying once without the map if the map pushed the prompt over budget), call Gemini, and raise `ProjectLoadError`, `ProjectTooLargeError` (413), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
-- `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a file/line count header. It does not load the tree or call Gemini.
+- `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
-- `app/models.py` holds the `ProjectFile` dataclass and the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`). The HTTP body is `AskRequest` in `main.py`.
-- `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is not used by `/ask` yet. It does not read the disk or call Gemini.
-- `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. Not used by /ask yet. It does not read the disk or call Gemini.
+- `app/models.py` holds the `ProjectFile` dataclass and the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`, `ProjectMap`). The HTTP body is `AskRequest` in `main.py`.
+- `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is used by `/ask` for the project map. It does not read the disk or call Gemini.
+- `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. Used by /ask for the project map. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
 ## Setup
@@ -62,11 +64,11 @@ The running app reads one project directory. `PROJECT_PATH` unset, empty, or whi
 
 What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB are skipped with a warning. A file that isn't valid UTF-8 is read as Windows-1252 (cp1252) with a warning; if neither works it's skipped with a warning.
 
-Prompt: files are sorted by path, paths are relative to the project dir, a one-line file/line count header comes first, and each file header shows its line count.
+Prompt order: instructions, project map, file/line count header, files sorted by path (relative paths, per-file line counts), question. The map lists per file its includes, types, macros, variables, declared and defined functions (with line ranges) and statics. It's capped at 20% of MAX_PROMPT_TOKENS (about 3 characters per token) and compacted in fixed tiers (no macros, then no statics, then counts only, then omitted). Its first line names the tier. Headers included but not loaded are listed as external.
 
 ## Prompt budget
 
-Each answer calls Gemini's free `count_tokens` on the final prompt before `generate_content`. That adds one round trip. A prompt over the budget returns 413 and is never truncated. A prompt longer than 10 characters per allowed token is rejected without the `count_tokens` call. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. For a big repository, point `PROJECT_PATH` at one application or example.
+Each answer calls Gemini's free `count_tokens` on the final prompt before `generate_content`. That adds one round trip. A prompt over the budget returns 413 and is never truncated. A prompt longer than 10 characters per allowed token is rejected without the `count_tokens` call. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. For a big repository, point `PROJECT_PATH` at one application or example. The character pre-check runs before indexing, so very large projects get their 413 without the parse cost. If the map pushes an otherwise fitting prompt over the budget, the map is dropped and the tokens are counted once more.
 
 ## Run
 
@@ -140,7 +142,7 @@ The tests run offline. Gemini is mocked.
 
 Each module has one job. Domain data is a dataclass (`ProjectFile`, `Settings`). Pydantic validates the HTTP request (`AskRequest`). The loader, the prompt builder, and the Gemini client are called directly.
 
-There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitter code index (not used in the prompt yet). The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
+There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitter code index used for the project map in every prompt. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
 
 ## Roadmap
 
