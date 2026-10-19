@@ -235,6 +235,36 @@ def test_generate_answer_empty_text_raises_empty_upstream_response(ai_service):
         module.generate_answer(QUESTION)
 
 
+def test_generate_answer_exclude_dirs_omits_vendor_file(ai_service, monkeypatch, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    main_content = (tmp_path / "main.c").read_text(encoding="utf-8")
+    marker = "VENDOR_ONLY_MARKER_9f3a"
+    vendor_file = tmp_path / "vendor" / "v.c"
+    vendor_file.parent.mkdir()
+    vendor_file.write_text(f"int {marker} = 1;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "settings",
+        Settings(
+            project_path=tmp_path,
+            gemini_api_key="test-key-DO-NOT-LOG",
+            gemini_model="test-model",
+            exclude_dirs=("vendor",),
+        ),
+    )
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    assert marker not in contents
+    assert main_content in contents
+
+
 def test_empty_upstream_response_error_subclasses_upstream_rejected(ai_service):
 
     # Arrange

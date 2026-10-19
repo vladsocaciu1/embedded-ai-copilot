@@ -50,7 +50,7 @@ def generate_answer(question: str) -> str:
 
     # Load project files from the specified project path
     try:
-        project_files = load_project_files(project_path)
+        project_files = load_project_files(settings.project_path, settings.exclude_dirs)
     except ValueError as e:
         logger.exception(f"Invalid project path: {project_path}")
         raise ProjectLoadError("Project files could not be loaded.") from e

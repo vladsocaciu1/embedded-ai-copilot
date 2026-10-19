@@ -9,6 +9,15 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_PROJECT_PATH = BASE_DIR / "sample_project"
+DEFAULT_EXCLUDE_DIRS = (
+    "CMSIS",
+    "*_HAL_Driver",
+    "Middlewares",
+    "third_party",
+    "vendor",
+    "external",
+    "GenData",
+)
 
 
 @dataclass(frozen=True)
@@ -16,6 +25,7 @@ class Settings:
     project_path: Path
     gemini_api_key: str
     gemini_model: str
+    exclude_dirs: tuple[str, ...] = DEFAULT_EXCLUDE_DIRS
 
 
 def _resolve_project_path(raw: str | Path) -> Path:
@@ -34,6 +44,18 @@ def _project_path_from_env() -> Path:
     return _resolve_project_path(configured)
 
 
+def _exclude_dirs_from_env() -> tuple[str, ...]:
+    raw = os.getenv("EXCLUDE_DIRS")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_EXCLUDE_DIRS
+    entries = tuple(part.strip() for part in raw.split(",") if part.strip())
+    for entry in entries:
+        if "/" in entry or "\\" in entry:
+            logger.error(f"EXCLUDE_DIRS entry {entry} must be a directory name.")
+            raise ValueError(f"EXCLUDE_DIRS entry {entry} must be a directory name.")
+    return entries
+
+
 def _require_project_directory(project_path: Path) -> None:
     if not project_path.exists():
         logger.error(f"Project path {project_path} does not exist.")
@@ -45,7 +67,7 @@ def _require_project_directory(project_path: Path) -> None:
 
 def load_settings(project_path: Path | None = None) -> Settings:
     # Plain load_dotenv() searches from this file, not the process cwd.
-    # PROJECT_PATH is read after this so it can live in .env.
+    # PROJECT_PATH and EXCLUDE_DIRS are read after this so they can live in .env.
     load_dotenv(find_dotenv(usecwd=True))
 
     # Explicit argument, then PROJECT_PATH, then DEFAULT_PROJECT_PATH.
@@ -66,10 +88,13 @@ def load_settings(project_path: Path | None = None) -> Settings:
         logger.error("GEMINI_MODEL is not set.")
         raise RuntimeError("GEMINI_MODEL is not set.")
 
+    exclude_dirs = _exclude_dirs_from_env()
+
     logger.info(f"Project path {project_path}.")
 
     return Settings(
         project_path=project_path,
         gemini_api_key=gemini_api_key,
         gemini_model=gemini_model,
+        exclude_dirs=exclude_dirs,
     )

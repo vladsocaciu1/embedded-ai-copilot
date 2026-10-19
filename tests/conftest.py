@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.config import Settings
+from app.config import DEFAULT_EXCLUDE_DIRS, Settings
 
 
 @pytest.fixture
@@ -19,6 +19,7 @@ def ai_service(monkeypatch, tmp_path):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-DO-NOT-LOG")
     monkeypatch.setenv("GEMINI_MODEL", "test-model")
     monkeypatch.setenv("PROJECT_PATH", str(tmp_path))
+    monkeypatch.setenv("EXCLUDE_DIRS", ",".join(DEFAULT_EXCLUDE_DIRS))
     (tmp_path / "main.c").write_text("int answer = 42;\n", encoding="utf-8")
 
     # load_settings() calls load_dotenv on first import. Names already set
