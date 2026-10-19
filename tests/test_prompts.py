@@ -352,3 +352,29 @@ def test_partial_prompt_order_and_rank():
 def test_assistant_prompt_mentions_partial():
     assert "partial" in assistant_prompt.lower()
 
+
+def test_build_project_map_file_count_full_and_omitted(mapped_files):
+    index, graph = _indexed(mapped_files)
+
+    full = build_project_map(index, graph, 10**9)
+    omitted = build_project_map(index, graph, 0)
+
+    assert full.tier == "full"
+    assert full.file_count == len(index.files)
+    assert omitted.tier == "omitted"
+    assert omitted.file_count == 0
+
+
+def test_focused_map_file_count_matches_header():
+    files = _focused_files()
+    index, graph = _indexed(files)
+    ranked = (Path("src/a.c"), Path("src/b.c"))
+    included = (Path("src/a.c"),)
+
+    project_map = build_focused_map(index, graph, ranked, included, 10**9)
+    header = project_map.text.splitlines()[0]
+    shown = int(header.split(":", 1)[1].split(" of ", 1)[0].strip())
+
+    assert f"{shown} of {len(files)} project files" in header
+    assert project_map.file_count == shown
+

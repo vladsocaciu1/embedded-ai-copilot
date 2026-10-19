@@ -4,7 +4,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from app.code_graph import CodeGraph
-from app.models import FileSymbols, ProjectFile, ProjectIndex, SymbolKind
+from app.models import FileSymbols, ProjectFile, ProjectIndex, RankedFile, SymbolKind
 from app.project_loader import SUPPORTED_EXTENSIONS
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_.\-/\\:]+")
@@ -31,9 +31,9 @@ _TERM_KINDS = frozenset({
 })
 
 
-def rank_files(
+def rank_files_detailed(
     question: str, index: ProjectIndex, graph: CodeGraph
-) -> tuple[Path, ...]:
+) -> tuple[RankedFile, ...]:
     tokens = _tokens(question)
     code_like = [token for token in tokens if _is_code_like(token)]
     seeds = [token for token in code_like if _SEED_RE.fullmatch(token)]
@@ -104,7 +104,12 @@ def rank_files(
         or lexical_of[file.path] > 0
     ]
     if not candidates:
-        return _entry_fallback(index, graph)
+        return tuple(
+            RankedFile(
+                path=path, reason="entry", focus=0, tier=9, hits=0, lexical=0
+            )
+            for path in _entry_fallback(index, graph)
+        )
     candidates.sort(
         key=lambda path: (
             -focus_of[path],
@@ -115,7 +120,43 @@ def rank_files(
             path.parts,
         )
     )
-    return tuple(candidates)
+    ranked: list[RankedFile] = []
+    for path in candidates:
+        tier = tiers.get(path, 9)
+        focus = focus_of[path]
+        if tier == 0:
+            reason = "named"
+        elif tier == 1:
+            reason = "defines"
+        elif tier == 2:
+            reason = "pair"
+        elif tier == 3:
+            reason = "call"
+        elif tier == 4:
+            reason = "include"
+        elif focus > 0:
+            reason = "focus"
+        else:
+            reason = "lexical"
+        ranked.append(
+            RankedFile(
+                path=path,
+                reason=reason,
+                focus=focus,
+                tier=tier,
+                hits=hits.get(path, 0),
+                lexical=lexical_of[path],
+            )
+        )
+    return tuple(ranked)
+
+
+def rank_files(
+    question: str, index: ProjectIndex, graph: CodeGraph
+) -> tuple[Path, ...]:
+    return tuple(
+        ranked.path for ranked in rank_files_detailed(question, index, graph)
+    )
 
 
 def pack_files(

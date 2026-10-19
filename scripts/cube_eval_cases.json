@@ -1,0 +1,58 @@
+[
+  {
+    "question": "In STM32F4-Discovery GPIO_EXTI, what does EXTI0_IRQHandler call?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/stm32f4xx_it.c"
+    ],
+    "k": 1
+  },
+  {
+    "question": "How is the system clock configured in the GPIO_EXTI example for STM32F4-Discovery?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/main.c"
+    ],
+    "k": 2
+  },
+  {
+    "question": "Explain Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/main.c",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/main.c"
+    ],
+    "k": 1
+  },
+  {
+    "question": "How does UART_TwoBoards_ComIT send data on STM32F4-Discovery?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/UART/UART_TwoBoards_ComIT/Src/main.c"
+    ],
+    "k": 8
+  },
+  {
+    "question": "Where is HAL_UART_Transmit_IT called in STM32F4-Discovery UART_TwoBoards_ComIT?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/UART/UART_TwoBoards_ComIT/Src/main.c"
+    ],
+    "k": 1
+  },
+  {
+    "question": "What does HAL_TIM_PeriodElapsedCallback do in STM32F4-Discovery TIM_TimeBase?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/TIM/TIM_TimeBase/Src/main.c"
+    ],
+    "k": 1
+  },
+  {
+    "question": "Which interrupt handler is used in STM32F4-Discovery UART_TwoBoards_ComIT?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/UART/UART_TwoBoards_ComIT/Src/stm32f4xx_it.c"
+    ],
+    "k": 5
+  },
+  {
+    "question": "What does SystemInit do in STM32F4-Discovery GPIO_EXTI?",
+    "expected": [
+      "Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/system_stm32f4xx.c"
+    ],
+    "k": 1
+  }
+]

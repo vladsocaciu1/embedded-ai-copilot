@@ -53,12 +53,12 @@ def build_focused_map(
             chosen.append((path, block))
             chosen_body += 1 + len(block)
     if not chosen:
-        return ProjectMap(text=_focused_header(0, n), tier="focused")
+        return ProjectMap(text=_focused_header(0, n), tier="focused", file_count=0)
     chosen.sort(key=lambda item: item[0].parts)
     text = "\n".join(
         [_focused_header(len(chosen), n), *(block for _path, block in chosen)]
     )
-    return ProjectMap(text=text, tier="focused")
+    return ProjectMap(text=text, tier="focused", file_count=len(chosen))
 
 
 def build_partial_prompt(
@@ -95,9 +95,9 @@ def build_project_map(index: ProjectIndex, graph: CodeGraph, max_chars: int) -> 
     for tier in _TIERS:
         text = _render_map(files, graph, tier)
         if len(text) <= max_chars:
-            return ProjectMap(text=text, tier=tier)
+            return ProjectMap(text=text, tier=tier, file_count=len(files))
     text = f"Project map omitted: too large for its budget ({len(files)} files)."
-    return ProjectMap(text=text, tier="omitted")
+    return ProjectMap(text=text, tier="omitted", file_count=0)
 
 
 def build_assistant_prompt(
