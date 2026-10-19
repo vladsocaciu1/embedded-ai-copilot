@@ -2,6 +2,9 @@
 name = "embedded-ai-copilot"
 version = "0.1.0"
 requires-python = ">=3.14,<3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Vlad Socaciu" }]
 dependencies = [
     "fastapi>=0.141.1",
     "google-genai>=2.16.0",
