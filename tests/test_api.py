@@ -4,10 +4,26 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _answer(text: str):
+    from app.models import Answer, AnswerContext
+
+    return Answer(
+        text=text,
+        context=AnswerContext(
+            mode="full",
+            files_total=1,
+            files_included=("main.c",),
+            prompt_tokens=100,
+            map_tier="full",
+        ),
+    )
+
+
 @pytest.fixture
-def api_client(ai_service):
+def api_client(ai_service, monkeypatch):
     from app.main import app
 
+    monkeypatch.setattr("app.main.ai_service.warm_up", lambda: None)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
 
@@ -15,14 +31,14 @@ def api_client(ai_service):
 def test_ask_returns_answer(api_client, monkeypatch):
 
     # Arrange
-    monkeypatch.setattr("app.main.ai_service.generate_answer", lambda question: "hi")
+    monkeypatch.setattr("app.main.ai_service.generate_answer", lambda question: _answer("hi"))
 
     # Act
     response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
 
     # Assert
     assert response.status_code == 200
-    assert response.json() == {"answer": "hi"}
+    assert response.json()["answer"] == "hi"
 
 
 def test_ask_project_load_error_returns_500(api_client, monkeypatch):
@@ -97,7 +113,7 @@ def test_ask_runtime_error_returns_500(api_client, monkeypatch):
 def test_ask_missing_question_returns_422(api_client, monkeypatch):
 
     # Arrange
-    generate_answer = MagicMock(return_value="hi")
+    generate_answer = MagicMock(return_value=_answer("hi"))
     monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
 
     # Act
@@ -111,7 +127,7 @@ def test_ask_missing_question_returns_422(api_client, monkeypatch):
 def test_ask_empty_question_returns_422(api_client, monkeypatch):
 
     # Arrange
-    generate_answer = MagicMock(return_value="hi")
+    generate_answer = MagicMock(return_value=_answer("hi"))
     monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
 
     # Act
@@ -125,7 +141,7 @@ def test_ask_empty_question_returns_422(api_client, monkeypatch):
 def test_ask_whitespace_only_question_returns_422(api_client, monkeypatch):
 
     # Arrange
-    generate_answer = MagicMock(return_value="hi")
+    generate_answer = MagicMock(return_value=_answer("hi"))
     monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
 
     # Act
@@ -139,7 +155,7 @@ def test_ask_whitespace_only_question_returns_422(api_client, monkeypatch):
 def test_ask_whitespace_newline_tab_question_returns_422(api_client, monkeypatch):
 
     # Arrange
-    generate_answer = MagicMock(return_value="hi")
+    generate_answer = MagicMock(return_value=_answer("hi"))
     monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
 
     # Act
@@ -154,7 +170,7 @@ def test_ask_padded_question_returns_200_unchanged(api_client, monkeypatch):
 
     # Arrange
     question = "  What does can.c do?  "
-    generate_answer = MagicMock(return_value="hi")
+    generate_answer = MagicMock(return_value=_answer("hi"))
     monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
 
     # Act
@@ -169,7 +185,7 @@ def test_ask_multiline_question_returns_200(api_client, monkeypatch):
 
     # Arrange
     question = "Line one\nLine two"
-    generate_answer = MagicMock(return_value="hi")
+    generate_answer = MagicMock(return_value=_answer("hi"))
     monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
 
     # Act
@@ -296,3 +312,47 @@ def test_ask_none_text_returns_502_not_null_answer(api_client, ai_service):
     # Assert
     assert response.status_code == 502
     assert response.json() != {"answer": None}
+
+
+def test_ask_returns_context(api_client, monkeypatch):
+
+    # Arrange
+    monkeypatch.setattr(
+        "app.main.ai_service.generate_answer",
+        lambda question: _answer("hi"),
+    )
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json() == {
+        "answer": "hi",
+        "context": {
+            "mode": "full",
+            "files_total": 1,
+            "files_included": ["main.c"],
+            "prompt_tokens": 100,
+            "map_tier": "full",
+        },
+    }
+
+
+def test_lifespan_warms_index_in_a_thread(ai_service, monkeypatch):
+
+    # Arrange
+    import threading
+
+    from app.main import app
+
+    started = threading.Event()
+
+    def spy() -> None:
+        started.set()
+
+    monkeypatch.setattr("app.main.ai_service.warm_up", spy)
+
+    # Act / Assert
+    with TestClient(app, raise_server_exceptions=False):
+        assert started.wait(5)

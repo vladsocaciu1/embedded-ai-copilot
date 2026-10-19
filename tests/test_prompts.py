@@ -4,7 +4,13 @@ from pathlib import Path
 from app.code_graph import build_graph
 from app.code_index import build_index
 from app.models import ProjectFile, SymbolKind
-from app.prompts import build_assistant_prompt, build_project_map
+from app.prompts import (
+    assistant_prompt,
+    build_assistant_prompt,
+    build_focused_map,
+    build_partial_prompt,
+    build_project_map,
+)
 
 @pytest.fixture 
 def project_files():
@@ -267,4 +273,82 @@ def test_build_assistant_prompt_places_map_or_omits_it(project_files):
     assert "Project map" not in without_map
     assert build_assistant_prompt(project_files, question, project_map=None) == without_map
     assert build_assistant_prompt(project_files, question, project_map="") == without_map
+
+
+def _focused_files():
+    return [
+        ProjectFile(
+            path=Path("src/a.c"),
+            content="void alpha(void)\n{\n    return;\n}\n#define MACRO_A 1\n",
+        ),
+        ProjectFile(
+            path=Path("src/b.c"),
+            content="void beta(void)\n{\n    return;\n}\n#define MACRO_B 1\n",
+        ),
+        ProjectFile(
+            path=Path("src/c.c"),
+            content="void gamma_only(void)\n{\n    return;\n}\n#define MACRO_C 1\n",
+        ),
+    ]
+
+
+def test_focused_map_marks_included_file_and_skips_macros():
+    files = _focused_files()
+    index, graph = _indexed(files)
+    ranked = (Path("src/a.c"), Path("src/b.c"))
+    included = (Path("src/a.c"),)
+
+    project_map = build_focused_map(index, graph, ranked, included, 10**9)
+
+    assert "Project map (focused): 2 of 3 project files" in project_map.text
+    assert project_map.tier == "focused"
+    included_line = next(
+        line for line in project_map.text.splitlines() if line.startswith("src/a.c")
+    )
+    other_line = next(
+        line for line in project_map.text.splitlines() if line.startswith("src/b.c")
+    )
+    assert "(included below)" in included_line
+    assert "(included below)" not in other_line
+    assert "macros:" not in project_map.text
+    assert "src/c.c" not in project_map.text
+
+
+def test_focused_map_cap_keeps_the_included_file():
+    files = _focused_files()
+    index, graph = _indexed(files)
+    included = (Path("src/b.c"),)
+    one = build_focused_map(index, graph, included, included, 10**9)
+    ranked = (Path("src/a.c"), Path("src/b.c"), Path("src/c.c"))
+
+    project_map = build_focused_map(index, graph, ranked, included, len(one.text))
+
+    assert len(project_map.text) <= len(one.text)
+    assert "src/b.c" in project_map.text
+    assert "(included below)" in project_map.text
+    assert "src/a.c" not in project_map.text
+
+
+def test_partial_prompt_order_and_rank():
+    files = _focused_files()
+    question = "What does beta do?"
+    map_text = "Project map (focused): 2 of 3 project files. marker-for-order"
+    included = (Path("src/b.c"), Path("src/a.c"))
+
+    prompt = build_partial_prompt(files, included, question, map_text, 1000)
+
+    assert (
+        prompt.find("You are an expert")
+        < prompt.find(map_text)
+        < prompt.find("Partial context:")
+        < prompt.find("File: src/b.c")
+        < prompt.find("Question:")
+    )
+    assert prompt.find("File: src/b.c") < prompt.find("File: src/a.c")
+    assert "gamma_only" not in prompt
+    assert "MACRO_C" not in prompt
+
+
+def test_assistant_prompt_mentions_partial():
+    assert "partial" in assistant_prompt.lower()
 
