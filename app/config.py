@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,7 @@ DEFAULT_EXCLUDE_DIRS = (
     "external",
     "GenData",
 )
+DEFAULT_MAX_PROMPT_TOKENS = 200_000
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class Settings:
     gemini_api_key: str
     gemini_model: str
     exclude_dirs: tuple[str, ...] = DEFAULT_EXCLUDE_DIRS
+    max_prompt_tokens: int = DEFAULT_MAX_PROMPT_TOKENS
 
 
 def _resolve_project_path(raw: str | Path) -> Path:
@@ -56,6 +59,17 @@ def _exclude_dirs_from_env() -> tuple[str, ...]:
     return entries
 
 
+def _max_prompt_tokens_from_env() -> int:
+    raw = os.getenv("MAX_PROMPT_TOKENS")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_MAX_PROMPT_TOKENS
+    value = raw.strip()
+    if re.fullmatch(r"[0-9]+", value) is None or int(value) <= 0:
+        logger.error("MAX_PROMPT_TOKENS must be a positive integer.")
+        raise ValueError("MAX_PROMPT_TOKENS must be a positive integer.")
+    return int(value)
+
+
 def _require_project_directory(project_path: Path) -> None:
     if not project_path.exists():
         logger.error(f"Project path {project_path} does not exist.")
@@ -67,7 +81,7 @@ def _require_project_directory(project_path: Path) -> None:
 
 def load_settings(project_path: Path | None = None) -> Settings:
     # Plain load_dotenv() searches from this file, not the process cwd.
-    # PROJECT_PATH and EXCLUDE_DIRS are read after this so they can live in .env.
+    # PROJECT_PATH, EXCLUDE_DIRS, and MAX_PROMPT_TOKENS are read after this so they can live in .env.
     load_dotenv(find_dotenv(usecwd=True))
 
     # Explicit argument, then PROJECT_PATH, then DEFAULT_PROJECT_PATH.
@@ -89,6 +103,7 @@ def load_settings(project_path: Path | None = None) -> Settings:
         raise RuntimeError("GEMINI_MODEL is not set.")
 
     exclude_dirs = _exclude_dirs_from_env()
+    max_prompt_tokens = _max_prompt_tokens_from_env()
 
     logger.info(f"Project path {project_path}.")
 
@@ -97,4 +112,5 @@ def load_settings(project_path: Path | None = None) -> Settings:
         gemini_api_key=gemini_api_key,
         gemini_model=gemini_model,
         exclude_dirs=exclude_dirs,
+        max_prompt_tokens=max_prompt_tokens,
     )

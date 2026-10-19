@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 1.5 complete.
+Phase 2 complete.
 
 ## Request path
 
@@ -21,10 +21,10 @@ flowchart LR
 ## Modules
 
 - `app/main.py` is the HTTP layer. It serves `GET /` and `POST /ask`, checks the question, and maps service errors to status codes. It does not read the project or call Gemini.
-- `app/ai_service.py` orchestrates one answer: load files, build the prompt, call Gemini, and raise `ProjectLoadError`, `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
+- `app/ai_service.py` orchestrates one answer: load files, build the prompt, checks the prompt against the token budget, call Gemini, and raise `ProjectLoadError`, `ProjectTooLargeError` (413), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a file/line count header. It does not load the tree or call Gemini.
-- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
+- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
 - `app/models.py` holds the `ProjectFile` dataclass. The HTTP body is `AskRequest` in `main.py`.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
@@ -50,6 +50,8 @@ GEMINI_MODEL=your-model
 # Optional: comma-separated directory-name patterns to skip; replaces the vendor defaults.
 # Use "," to include all vendor code. Hidden and build dirs are always skipped.
 # EXCLUDE_DIRS=CMSIS,*_HAL_Driver,Middlewares,third_party,vendor,external,GenData
+# Optional: max prompt size in tokens (default 200000; Gemini 3.1 Pro input pricing doubles above 200k).
+# MAX_PROMPT_TOKENS=200000
 ```
 
 Startup fails if either value is missing or empty (`RuntimeError: GEMINI_API_KEY is not set.` or `RuntimeError: GEMINI_MODEL is not set.`).
@@ -59,6 +61,10 @@ The running app reads one project directory. `PROJECT_PATH` unset, empty, or whi
 What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB are skipped with a warning. A file that isn't valid UTF-8 is read as Windows-1252 (cp1252) with a warning; if neither works it's skipped with a warning.
 
 Prompt: files are sorted by path, paths are relative to the project dir, a one-line file/line count header comes first, and each file header shows its line count.
+
+## Prompt budget
+
+Each answer calls Gemini's free `count_tokens` on the final prompt before `generate_content`. That adds one round trip. A prompt over the budget returns 413 and is never truncated. A prompt longer than 10 characters per allowed token is rejected without the `count_tokens` call. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. For a big repository, point `PROJECT_PATH` at one application or example.
 
 ## Run
 
@@ -100,9 +106,10 @@ Response body: `{"answer":"<text>"}`.
 | --- | --- | --- |
 | 200 | Gemini returned text | `{"answer":"<text>"}` |
 | 422 | Invalid, empty, or whitespace-only `question` | validation `detail` list, example below |
+| 413 | Prompt exceeds the token budget | `{"detail":"Project is too large for the prompt budget: <n> tokens, limit <limit>. Point PROJECT_PATH at a smaller directory or raise MAX_PROMPT_TOKENS."}` |
 | 500 | Project files could not be loaded | `{"detail":"Project files could not be loaded."}` |
 | 500 | Unexpected error | `Internal Server Error` |
-| 502 | Gemini rejected the request, or returned empty text | `{"detail":"AI provider rejected the request."}` |
+| 502 | Gemini rejected the request, or returned empty text, or returned no token count | `{"detail":"AI provider rejected the request."}` |
 | 503 | Gemini is unavailable | `{"detail":"AI provider is unavailable."}` |
 
 Empty question:
@@ -137,7 +144,7 @@ There is no RAG, agents, vector database, LangChain, or tree-sitter. The sample 
 
 1. Phase 1: simple assistant (done)
 2. Phase 1.5: engineering quality (done)
-3. Phase 2: smarter project loading
+3. Phase 2: smarter project loading (done)
 4. Phase 3: tree-sitter / code structure
 5. Phase 4: RAG / embeddings / ChromaDB
 6. Phase 5: agentic AI

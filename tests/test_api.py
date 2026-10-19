@@ -226,6 +226,64 @@ def test_ask_empty_upstream_response_error_returns_502_without_message(api_clien
     assert "Traceback" not in response.text
 
 
+def test_ask_project_too_large_returns_413(api_client, monkeypatch):
+
+    # Arrange
+    from app.ai_service import ProjectTooLargeError
+
+    monkeypatch.setattr(
+        "app.main.ai_service.generate_answer",
+        MagicMock(side_effect=ProjectTooLargeError(412345, 200000)),
+    )
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert "412345" in detail
+    assert "200000" in detail
+
+
+def test_ask_project_too_large_estimated_returns_413(api_client, monkeypatch):
+
+    # Arrange
+    from app.ai_service import ProjectTooLargeError
+
+    monkeypatch.setattr(
+        "app.main.ai_service.generate_answer",
+        MagicMock(side_effect=ProjectTooLargeError(2_500_000, 200000, estimated=True)),
+    )
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert "2500000" in detail
+    assert "200000" in detail
+
+
+def test_ask_project_too_large_body_omits_traceback(api_client, monkeypatch):
+
+    # Arrange
+    from app.ai_service import ProjectTooLargeError
+
+    monkeypatch.setattr(
+        "app.main.ai_service.generate_answer",
+        MagicMock(side_effect=ProjectTooLargeError(412345, 200000)),
+    )
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 413
+    assert "Traceback" not in response.text
+
+
 def test_ask_none_text_returns_502_not_null_answer(api_client, ai_service):
 
     # Arrange

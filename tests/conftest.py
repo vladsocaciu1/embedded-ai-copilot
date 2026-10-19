@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.config import DEFAULT_EXCLUDE_DIRS, Settings
+from app.config import DEFAULT_EXCLUDE_DIRS, DEFAULT_MAX_PROMPT_TOKENS, Settings
 
 
 @pytest.fixture
@@ -20,6 +20,7 @@ def ai_service(monkeypatch, tmp_path):
     monkeypatch.setenv("GEMINI_MODEL", "test-model")
     monkeypatch.setenv("PROJECT_PATH", str(tmp_path))
     monkeypatch.setenv("EXCLUDE_DIRS", ",".join(DEFAULT_EXCLUDE_DIRS))
+    monkeypatch.setenv("MAX_PROMPT_TOKENS", str(DEFAULT_MAX_PROMPT_TOKENS))
     (tmp_path / "main.c").write_text("int answer = 42;\n", encoding="utf-8")
 
     # load_settings() calls load_dotenv on first import. Names already set
@@ -32,6 +33,7 @@ def ai_service(monkeypatch, tmp_path):
 
     client = MagicMock()
     monkeypatch.setattr(module, "client", client)
+    client.models.count_tokens.return_value.total_tokens = 100
     monkeypatch.setattr(
         module,
         "settings",
