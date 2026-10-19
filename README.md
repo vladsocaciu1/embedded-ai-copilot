@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 2 complete.
+Phase 3 in progress (code index).
 
 ## Request path
 
@@ -25,7 +25,8 @@ flowchart LR
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a file/line count header. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
-- `app/models.py` holds the `ProjectFile` dataclass. The HTTP body is `AskRequest` in `main.py`.
+- `app/models.py` holds the `ProjectFile` dataclass and the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `FileSymbols`, `ProjectIndex`). The HTTP body is `AskRequest` in `main.py`.
+- `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is not used by `/ask` yet. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
 ## Setup
@@ -138,14 +139,14 @@ The tests run offline. Gemini is mocked.
 
 Each module has one job. Domain data is a dataclass (`ProjectFile`, `Settings`). Pydantic validates the HTTP request (`AskRequest`). The loader, the prompt builder, and the Gemini client are called directly.
 
-There is no RAG, agents, vector database, LangChain, or tree-sitter. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
+There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitter code index (not used in the prompt yet). The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
 
 ## Roadmap
 
 1. Phase 1: simple assistant (done)
 2. Phase 1.5: engineering quality (done)
 3. Phase 2: smarter project loading (done)
-4. Phase 3: tree-sitter / code structure
+4. Phase 3: tree-sitter / code structure (in progress)
 5. Phase 4: RAG / embeddings / ChromaDB
 6. Phase 5: agentic AI
 
@@ -156,6 +157,7 @@ There is no RAG, agents, vector database, LangChain, or tree-sitter. The sample 
 ├── app/
 │   ├── __init__.py
 │   ├── ai_service.py
+│   ├── code_index.py
 │   ├── config.py
 │   ├── logging_config.py
 │   ├── main.py
@@ -178,7 +180,9 @@ There is no RAG, agents, vector database, LangChain, or tree-sitter. The sample 
 │   ├── conftest.py
 │   ├── test_ai_service.py
 │   ├── test_api.py
+│   ├── test_code_index.py
 │   ├── test_config.py
+│   ├── test_logging_startup.py
 │   ├── test_project_loader.py
 │   └── test_prompts.py
 ├── .gitignore
