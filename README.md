@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 3 in progress (code index).
+Phase 3 in progress (code index, relations).
 
 ## Request path
 
@@ -25,8 +25,9 @@ flowchart LR
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a file/line count header. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
-- `app/models.py` holds the `ProjectFile` dataclass and the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `FileSymbols`, `ProjectIndex`). The HTTP body is `AskRequest` in `main.py`.
-- `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is not used by `/ask` yet. It does not read the disk or call Gemini.
+- `app/models.py` holds the `ProjectFile` dataclass and the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`). The HTTP body is `AskRequest` in `main.py`.
+- `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is not used by `/ask` yet. It does not read the disk or call Gemini.
+- `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. Not used by /ask yet. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
 ## Setup
@@ -157,6 +158,7 @@ There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitt
 ├── app/
 │   ├── __init__.py
 │   ├── ai_service.py
+│   ├── code_graph.py
 │   ├── code_index.py
 │   ├── config.py
 │   ├── logging_config.py
@@ -180,6 +182,7 @@ There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitt
 │   ├── conftest.py
 │   ├── test_ai_service.py
 │   ├── test_api.py
+│   ├── test_code_graph.py
 │   ├── test_code_index.py
 │   ├── test_config.py
 │   ├── test_logging_startup.py

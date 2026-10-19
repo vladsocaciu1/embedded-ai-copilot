@@ -5,9 +5,10 @@ from time import perf_counter
 
 import tree_sitter_c
 import tree_sitter_cpp
-from tree_sitter import Language, Node, Parser
+from tree_sitter import Language, Node, Parser, Query, QueryCursor
 
 from app.models import (
+    Call,
     FileSymbols,
     Include,
     ProjectFile,
@@ -32,6 +33,9 @@ CPP_SUFFIXES = frozenset({
 
 _C_LANGUAGE = Language(tree_sitter_c.language())
 _CPP_LANGUAGE = Language(tree_sitter_cpp.language())
+_CALL_QUERY = "(call_expression function: (_) @function)"
+_C_CALL_QUERY = Query(_C_LANGUAGE, _CALL_QUERY)
+_CPP_CALL_QUERY = Query(_CPP_LANGUAGE, _CALL_QUERY)
 
 _CONTAINERS = frozenset({
     "translation_unit",
@@ -93,13 +97,14 @@ def index_file(project_file: ProjectFile) -> FileSymbols:
             has_errors=False,
             symbols=(),
             includes=(),
+            calls=(),
         )
 
     language = _C_LANGUAGE if grammar == "c" else _CPP_LANGUAGE
     parser = Parser(language)
     tree = parser.parse(project_file.content.encode("utf-8"))
     root = tree.root_node
-    symbols, includes = _collect(root, grammar == "cpp")
+    symbols, includes, calls = _collect(root, grammar == "cpp")
     has_errors = root.has_error
     if has_errors:
         logger.debug(f"Parse errors in {project_file.path} ({grammar}).")
@@ -109,6 +114,7 @@ def index_file(project_file: ProjectFile) -> FileSymbols:
         has_errors=has_errors,
         symbols=tuple(symbols),
         includes=tuple(includes),
+        calls=tuple(calls),
     )
 
 
@@ -122,11 +128,13 @@ def build_index(project_files: Sequence[ProjectFile]) -> ProjectIndex:
     errored = sum(file.has_errors for file in indexed)
     symbol_count = sum(len(file.symbols) for file in indexed)
     include_count = sum(len(file.includes) for file in indexed)
+    call_count = sum(len(file.calls) for file in indexed)
     logger.info(
         f"Indexed {len(indexed)} files "
         f"({c_files} C, {cpp_files} C++, {skipped} not parsed, "
         f"{errored} with parse errors): "
-        f"{symbol_count} symbols, {include_count} includes in {elapsed_ms} ms."
+        f"{symbol_count} symbols, {include_count} includes, {call_count} calls "
+        f"in {elapsed_ms} ms."
     )
     return ProjectIndex(files=indexed)
 
@@ -140,9 +148,12 @@ def _grammar_for(path) -> str | None:
     return None
 
 
-def _collect(root: Node, cpp: bool) -> tuple[list[Symbol], list[Include]]:
+def _collect(
+    root: Node, cpp: bool
+) -> tuple[list[Symbol], list[Include], list[Call]]:
     symbols: list[Symbol] = []
     includes: list[Include] = []
+    calls: list[Call] = []
     stack: list[_Frame] = [(root, (), None, False)]
     while stack:
         node, scope, guard, in_class = stack.pop()
@@ -154,7 +165,7 @@ def _collect(root: Node, cpp: bool) -> tuple[list[Symbol], list[Include]]:
         elif node_type == "namespace_definition":
             _handle_namespace(node, scope, guard, in_class, cpp, symbols, stack)
         elif node_type == "function_definition":
-            _handle_function(node, scope, cpp, symbols)
+            _handle_function(node, scope, cpp, symbols, calls)
         elif node_type == "declaration":
             _handle_declaration(node, scope, guard, in_class, cpp, symbols, stack)
         elif node_type == "type_definition":
@@ -167,7 +178,7 @@ def _collect(root: Node, cpp: bool) -> tuple[list[Symbol], list[Include]]:
             _handle_macro(node, guard, symbols)
         elif node_type == "preproc_include":
             _handle_include(node, includes)
-    return symbols, includes
+    return symbols, includes, calls
 
 
 def _push_children(
@@ -221,6 +232,7 @@ def _handle_function(
     scope: tuple[str, ...],
     cpp: bool,
     symbols: list[Symbol],
+    calls: list[Call],
 ) -> None:
     declarator = node.child_by_field_name("declarator")
     if declarator is None:
@@ -228,16 +240,67 @@ def _handle_function(
     name = _function_name(declarator)
     if not name:
         return
-    symbols.append(
-        _make_symbol(
-            name,
-            SymbolKind.FUNCTION,
-            node,
-            scope,
-            cpp,
-            is_static=_is_static(node),
-        )
+    symbol = _make_symbol(
+        name,
+        SymbolKind.FUNCTION,
+        node,
+        scope,
+        cpp,
+        is_static=_is_static(node),
     )
+    symbols.append(symbol)
+    body = node.child_by_field_name("body")
+    if body is None:
+        return
+    calls.extend(_calls_in_body(body, symbol.name, cpp))
+
+
+def _calls_in_body(body: Node, caller: str, cpp: bool) -> list[Call]:
+    query = _CPP_CALL_QUERY if cpp else _C_CALL_QUERY
+    captured = QueryCursor(query).captures(body).get("function", [])
+    found: dict[tuple[str, int, bool], Call] = {}
+    for node in captured:
+        extracted = _callee(node)
+        if extracted is None:
+            continue
+        callee, is_member = extracted
+        line = _start_line(node)
+        key = (callee, line, is_member)
+        if key in found:
+            continue
+        found[key] = Call(
+            caller=caller,
+            callee=callee,
+            line=line,
+            is_member=is_member,
+        )
+    return sorted(found.values(), key=lambda call: (call.line, call.callee))
+
+
+def _callee(node: Node) -> tuple[str, bool] | None:
+    node_type = node.type
+    if node_type in {"identifier", "qualified_identifier"}:
+        callee = _normalize_name(_text(node))
+        if not callee:
+            return None
+        return callee, False
+    if node_type == "template_function":
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return None
+        callee = _text(name_node)
+        if not callee:
+            return None
+        return callee, False
+    if node_type == "field_expression":
+        field_node = node.child_by_field_name("field")
+        if field_node is None:
+            return None
+        callee = _text(field_node)
+        if not callee:
+            return None
+        return callee, True
+    return None
 
 
 def _handle_declaration(
