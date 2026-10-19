@@ -1,5 +1,6 @@
 import logging
 import posixpath
+from collections.abc import Collection
 from pathlib import Path
 from time import perf_counter
 
@@ -55,6 +56,12 @@ class CodeGraph:
         included_by: dict[Path, tuple[Path, ...]],
         pairs: dict[Path, tuple[Path, ...]],
         paths: frozenset[Path],
+        *,
+        by_parts: dict[tuple[str, ...], tuple[Path, ...]],
+        by_basename: dict[str, tuple[Path, ...]],
+        lower_parts: dict[Path, tuple[str, ...]],
+        parent_parts: dict[Path, tuple[str, ...]],
+        by_stem_group: dict[tuple[str, str], tuple[Path, ...]],
     ) -> None:
         self._definitions = definitions
         self._calls_by_callee = calls_by_callee
@@ -63,6 +70,11 @@ class CodeGraph:
         self._included_by = included_by
         self._pairs = pairs
         self._paths = paths
+        self._by_parts = by_parts
+        self._by_basename = by_basename
+        self._lower_parts = lower_parts
+        self._parent_parts = parent_parts
+        self._by_stem_group = by_stem_group
 
     def definitions(
         self, name: str, from_path: Path | None = None
@@ -96,6 +108,80 @@ class CodeGraph:
     def pair(self, path: Path) -> tuple[Path, ...]:
         return self._pairs.get(path, ())
 
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "definitions": dict(self._definitions),
+            "calls_by_callee": dict(self._calls_by_callee),
+            "calls_by_caller": dict(self._calls_by_caller),
+            "includes": dict(self._includes),
+            "included_by": dict(self._included_by),
+            "pairs": dict(self._pairs),
+            "by_parts": dict(self._by_parts),
+            "by_basename": dict(self._by_basename),
+            "lower_parts": dict(self._lower_parts),
+            "parent_parts": dict(self._parent_parts),
+            "by_stem_group": dict(self._by_stem_group),
+            "paths": tuple(sorted(self._paths, key=lambda path: path.parts)),
+        }
+
+
+def update_graph(
+    graph: CodeGraph,
+    old_index: ProjectIndex,
+    new_index: ProjectIndex,
+    changed: Collection[Path],
+) -> CodeGraph:
+    new_paths = {file.path for file in new_index.files}
+    old_paths = {file.path for file in old_index.files}
+    if not (new_paths == graph._paths == old_paths):
+        raise ValueError("path set must be unchanged")
+    changed_paths = frozenset(changed)
+    if not changed_paths <= graph._paths:
+        raise ValueError("changed paths must belong to the graph")
+
+    started = perf_counter()
+    definitions, definition_names = _patch_definitions(
+        graph, old_index, new_index, changed_paths
+    )
+    calls_by_callee, callee_names = _patch_calls(
+        graph._calls_by_callee,
+        old_index,
+        new_index,
+        changed_paths,
+        by_callee=True,
+    )
+    calls_by_caller, caller_names = _patch_calls(
+        graph._calls_by_caller,
+        old_index,
+        new_index,
+        changed_paths,
+        by_callee=False,
+    )
+    includes, included_by, include_count = _patch_includes(
+        graph, new_index, changed_paths
+    )
+    updated = CodeGraph(
+        definitions=definitions,
+        calls_by_callee=calls_by_callee,
+        calls_by_caller=calls_by_caller,
+        includes=includes,
+        included_by=included_by,
+        pairs=graph._pairs,
+        paths=graph._paths,
+        by_parts=graph._by_parts,
+        by_basename=graph._by_basename,
+        lower_parts=graph._lower_parts,
+        parent_parts=graph._parent_parts,
+        by_stem_group=graph._by_stem_group,
+    )
+    elapsed_ms = round((perf_counter() - started) * 1000)
+    logger.info(
+        f"Graph updated: {len(changed_paths)} files, "
+        f"{len(definition_names | callee_names | caller_names)} names, "
+        f"{include_count} includes re-resolved in {elapsed_ms} ms."
+    )
+    return updated
+
 
 def _assemble(index: ProjectIndex) -> CodeGraph:
     by_basename: dict[str, list[Path]] = {}
@@ -127,7 +213,173 @@ def _assemble(index: ProjectIndex) -> CodeGraph:
         included_by=included_by,
         pairs=_pair_table(index, stem_group_table, parent_parts),
         paths=frozenset(file.path for file in index.files),
+        by_parts=part_table,
+        by_basename=basename_table,
+        lower_parts=lower_parts,
+        parent_parts=parent_parts,
+        by_stem_group=stem_group_table,
     )
+
+
+def _patch_definitions(
+    graph: CodeGraph,
+    old_index: ProjectIndex,
+    new_index: ProjectIndex,
+    changed_paths: frozenset[Path],
+) -> tuple[dict[str, tuple[SymbolRef, ...]], set[str]]:
+    grouped: dict[str, list[SymbolRef]] = {}
+    for file in new_index.files:
+        if file.path not in changed_paths:
+            continue
+        for symbol in file.symbols:
+            if symbol.kind in _SKIP_KINDS:
+                continue
+            grouped.setdefault(_simple(symbol.name), []).append(
+                SymbolRef(path=file.path, symbol=symbol)
+            )
+    names = set(grouped) | _definition_names(old_index, changed_paths)
+    table = dict(graph._definitions)
+
+    def new_refs(name: str) -> list[SymbolRef]:
+        return grouped.get(name, [])
+
+    _merge_refs(
+        table,
+        names,
+        changed_paths,
+        new_refs,
+        lambda ref: (ref.path.parts, ref.symbol.start_line),
+    )
+    return table, names
+
+
+def _patch_calls(
+    old_table: dict[str, tuple[CallRef, ...]],
+    old_index: ProjectIndex,
+    new_index: ProjectIndex,
+    changed_paths: frozenset[Path],
+    by_callee: bool,
+) -> tuple[dict[str, tuple[CallRef, ...]], set[str]]:
+    grouped: dict[str, list[CallRef]] = {}
+    for file in new_index.files:
+        if file.path not in changed_paths:
+            continue
+        for call in file.calls:
+            key = _simple(call.callee if by_callee else call.caller)
+            grouped.setdefault(key, []).append(CallRef(path=file.path, call=call))
+    names = set(grouped) | _call_names(old_index, changed_paths, by_callee)
+    table = dict(old_table)
+
+    def new_refs(name: str) -> list[CallRef]:
+        return grouped.get(name, [])
+
+    _merge_refs(
+        table,
+        names,
+        changed_paths,
+        new_refs,
+        lambda ref: (ref.path.parts, ref.call.line),
+    )
+    return table, names
+
+
+def _merge_refs(
+    table: dict[str, tuple[object, ...]],
+    names: set[str],
+    changed_paths: frozenset[Path],
+    new_refs,
+    sort_key,
+) -> None:
+    for name in names:
+        merged = [
+            ref for ref in table.get(name, ()) if ref.path not in changed_paths
+        ] + new_refs(name)
+        if merged:
+            table[name] = tuple(sorted(merged, key=sort_key))
+        else:
+            table.pop(name, None)
+
+
+def _definition_names(
+    index: ProjectIndex, changed_paths: frozenset[Path]
+) -> set[str]:
+    names: set[str] = set()
+    for file in index.files:
+        if file.path not in changed_paths:
+            continue
+        for symbol in file.symbols:
+            if symbol.kind in _SKIP_KINDS:
+                continue
+            names.add(_simple(symbol.name))
+    return names
+
+
+def _call_names(
+    index: ProjectIndex, changed_paths: frozenset[Path], by_callee: bool
+) -> set[str]:
+    names: set[str] = set()
+    for file in index.files:
+        if file.path not in changed_paths:
+            continue
+        for call in file.calls:
+            names.add(_simple(call.callee if by_callee else call.caller))
+    return names
+
+
+def _patch_includes(
+    graph: CodeGraph,
+    new_index: ProjectIndex,
+    changed_paths: frozenset[Path],
+) -> tuple[
+    dict[Path, tuple[ResolvedInclude, ...]],
+    dict[Path, tuple[Path, ...]],
+    int,
+]:
+    includes = dict(graph._includes)
+    included_by = dict(graph._included_by)
+    touched: set[Path] = set()
+    include_count = 0
+    for file in new_index.files:
+        if file.path not in changed_paths:
+            continue
+        resolved = tuple(
+            ResolvedInclude(
+                include=include,
+                candidates=_resolve_include(
+                    include,
+                    file.path,
+                    graph._by_parts,
+                    graph._by_basename,
+                    graph._lower_parts,
+                    graph._parent_parts,
+                ),
+            )
+            for include in file.includes
+        )
+        include_count += len(file.includes)
+        for item in graph._includes[file.path]:
+            touched.update(item.candidates)
+        for item in resolved:
+            touched.update(item.candidates)
+        includes[file.path] = resolved
+    for target in touched:
+        includers = {
+            path
+            for path in graph._included_by.get(target, ())
+            if path not in changed_paths
+        }
+        for path in changed_paths:
+            for item in includes[path]:
+                if target in item.candidates:
+                    includers.add(path)
+                    break
+        if includers:
+            included_by[target] = tuple(
+                sorted(includers, key=lambda path: path.parts)
+            )
+        else:
+            included_by.pop(target, None)
+    return includes, included_by, include_count
 
 
 def _definition_table(index: ProjectIndex) -> dict[str, tuple[SymbolRef, ...]]:

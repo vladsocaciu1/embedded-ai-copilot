@@ -30,13 +30,13 @@ flowchart LR
 - `app/ai_service.py` prepares one prompt on a path shared by `generate_answer` and `dry_run`: load files, get the index and graph from the cache, then route. Projects that fit use the full project map and count tokens (retrying once without the map if the map pushed the prompt over budget). Projects that do not fit use partial mode: a focused map, whole files selected for the question, and a partial-context notice. `generate_answer` sends that prompt to Gemini and, in partial mode, adds a footer to the answer. `dry_run` returns the same prompt and does not call Gemini. It estimates tokens from the character length unless `exact` is set, in which case it uses the same token count as `/ask`. It raises `ProjectLoadError`, `ProjectTooLargeError` (413, only when no selected file fits), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), `UpstreamUnavailableError`, or `RateLimitedError` (429). It does not define routes or scan the disk itself.
 - `app/gemini_retry.py` retries Gemini calls on rate limits and transient errors with backoff and a per-request budget. It does not build prompts or know about HTTP.
 - `app/context_selector.py` ranks files for a question from names in it and the index/graph, and packs whole files into a char budget. `rank_files_detailed` returns the same order as `rank_files`, plus a reason. It does not read the disk or call Gemini.
-- `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is rebuilt only when any file changed. It does not read the disk or call Gemini.
+- `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is updated incrementally when only file contents changed (up to max(200, 2%) files), and rebuilt when paths are added, removed or renamed, or when more files changed. It does not read the disk or call Gemini.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. Full mode adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. Partial mode adds a focused map and a partial-context notice, then the selected files in rank order. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
 - `app/models.py` holds the `ProjectFile` dataclass, the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`, `ProjectMap`), `RankedFile`, `PreparedPrompt`, and `Answer` / `AnswerContext`. The HTTP body is `AskRequest` in `main.py`.
 - `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is used by `/ask` for the project map. It does not read the disk or call Gemini.
-- `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. Used by /ask for the project map. It does not read the disk or call Gemini.
+- `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. `update_graph` patches a graph for content edits; the result equals a full rebuild. Used by /ask for the project map. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
 ## Setup
@@ -236,6 +236,12 @@ uv run python scripts/eval_selection.py <cube_root>
 
 `scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph, and ranks the cases in `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0.
 
+## Graph update check
+
+`uv run python scripts/graph_update_check.py <project_dir> [--file REL_PATH]`
+loads the tree and edits one file in memory.
+Targets: cache edit <= 1.0 s, `update_graph` <= 0.3 s, snapshot equal to a full rebuild.
+
 ## Design
 
 Each module has one job. Domain data is a dataclass (`ProjectFile`, `Settings`). Pydantic validates the HTTP request (`AskRequest`). The loader, the prompt builder, and the Gemini client are called directly.
@@ -280,7 +286,8 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │       └── assistant.md
 ├── scripts/
 │   ├── cube_eval_cases.json
-│   └── eval_selection.py
+│   ├── eval_selection.py
+│   └── graph_update_check.py
 ├── sample_project/
 │   ├── inc/
 │   │   ├── app.h

@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 import app.index_cache as index_cache_module
-from app.code_graph import CodeGraph, build_graph
+from app.code_graph import CodeGraph, build_graph, update_graph
 from app.code_index import build_index
 from app.index_cache import IndexCache
 from app.models import ProjectFile
@@ -36,6 +36,7 @@ class _Spies:
     def __init__(self) -> None:
         self.index_calls: list[tuple[ProjectFile, ...]] = []
         self.graph_calls: list[object] = []
+        self.update_calls: list[tuple[object, object]] = []
 
 
 def _install_spies(monkeypatch) -> _Spies:
@@ -49,15 +50,22 @@ def _install_spies(monkeypatch) -> _Spies:
         spies.graph_calls.append(index)
         return build_graph(index)
 
+    def spy_update(graph, old_index, new_index, changed):
+        spies.update_calls.append((new_index, changed))
+        return update_graph(graph, old_index, new_index, changed)
+
     monkeypatch.setattr(index_cache_module, "build_index", spy_index)
     monkeypatch.setattr(index_cache_module, "build_graph", spy_graph)
+    monkeypatch.setattr(index_cache_module, "update_graph", spy_update)
     return spies
 
 
 def _equals_uncached(index, graph, files) -> None:
     expected = build_index(files)
+    expected_graph = build_graph(expected)
     assert index == expected
-    assert_same_graph(graph, build_graph(expected))
+    assert_same_graph(graph, expected_graph)
+    assert graph.snapshot() == expected_graph.snapshot()
 
 
 def test_c1_cold_equals_uncached():
@@ -104,7 +112,9 @@ def test_c3_one_edit_reparses_that_file_and_reuses_symbols(monkeypatch):
     index, graph = cache.get(PROJECT, files)
 
     assert spies.index_calls == [(edited,)]
-    assert len(spies.graph_calls) == 1
+    assert spies.graph_calls == []
+    assert len(spies.update_calls) == 1
+    assert spies.update_calls[0][1] == [Path("b.c")]
     _equals_uncached(index, graph, files)
     by_path = {file_symbols.path: file_symbols for file_symbols in first.files}
     second = {file_symbols.path: file_symbols for file_symbols in index.files}
@@ -219,8 +229,119 @@ def test_c10_log_line_omits_source(caplog):
     messages = [record.message for record in caplog.records]
     assert any(
         record.levelno == logging.INFO
-        and "Index cache: 3 files, 2 reused, 1 parsed, 0 dropped, graph rebuilt" in record.message
+        and "Index cache: 3 files, 2 reused, 1 parsed, 0 dropped, graph updated" in record.message
         for record in caplog.records
     )
     assert any("graph reused" in message for message in messages)
     assert all(MARKER not in record.message for record in caplog.records)
+
+
+def test_k1_limit_updates_then_rebuilds(monkeypatch, caplog):
+    monkeypatch.setattr(index_cache_module, "INCREMENTAL_MIN_FILES", 2)
+    files = _files(
+        ("a.c", "int a(void) { return 1; }\n"),
+        ("b.c", "int b(void) { return 2; }\n"),
+        ("c.c", "int c(void) { return 3; }\n"),
+    )
+    cache = IndexCache()
+    cache.get(PROJECT, files)
+    spies = _install_spies(monkeypatch)
+    cache.get(
+        PROJECT,
+        [
+            ProjectFile(Path("a.c"), "int a(void) { return 8; }\n"),
+            ProjectFile(Path("b.c"), "int b(void) { return 9; }\n"),
+            files[2],
+        ],
+    )
+    assert spies.graph_calls == []
+    assert len(spies.update_calls) == 1
+
+    spies = _install_spies(monkeypatch)
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    cache.get(
+        PROJECT,
+        [
+            ProjectFile(Path("a.c"), "int a(void) { return 4; }\n"),
+            ProjectFile(Path("b.c"), "int b(void) { return 5; }\n"),
+            ProjectFile(Path("c.c"), "int c(void) { return 6; }\n"),
+        ],
+    )
+    assert spies.update_calls == []
+    assert len(spies.graph_calls) == 1
+    assert any("graph rebuilt" in record.message for record in caplog.records)
+
+
+def test_k2_add_delete_rename_do_not_update(monkeypatch):
+    main = ProjectFile(path=Path("main.c"), content='#include "new.h"\n')
+    cache = IndexCache()
+    cache.get(PROJECT, [main])
+    spies = _install_spies(monkeypatch)
+    added = ProjectFile(path=Path("inc/new.h"), content="int added(void);\n")
+    cache.get(PROJECT, [main, added])
+    assert spies.update_calls == []
+    assert spies.graph_calls
+
+    main = ProjectFile(path=Path("main.c"), content='#include "helper.h"\n')
+    helper = ProjectFile(path=Path("helper.h"), content="int helper(void);\n")
+    cache = IndexCache()
+    cache.get(PROJECT, [main, helper])
+    spies = _install_spies(monkeypatch)
+    cache.get(PROJECT, [main])
+    assert spies.update_calls == []
+    assert spies.graph_calls
+
+    content = "int renamed(void) { return 1; }\n"
+    cache = IndexCache()
+    cache.get(PROJECT, _files(("old.c", content)))
+    spies = _install_spies(monkeypatch)
+    cache.get(PROJECT, [ProjectFile(path=Path("new.c"), content=content)])
+    assert spies.update_calls == []
+    assert spies.graph_calls
+
+
+def test_k3_reorder_rebuilds_with_nothing_parsed(monkeypatch, caplog):
+    files = _files(("a.c", "int a;\n"), ("b.c", "int b;\n"))
+    cache = IndexCache()
+    cache.get(PROJECT, files)
+    spies = _install_spies(monkeypatch)
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    cache.get(PROJECT, [files[1], files[0]])
+    assert spies.update_calls == []
+    assert len(spies.graph_calls) == 1
+    assert any(
+        "0 parsed" in record.message and "graph rebuilt" in record.message
+        for record in caplog.records
+    )
+
+
+def test_k4_project_change_rebuilds(monkeypatch):
+    files = _files(
+        ("a.c", "int a(void) { return 1; }\n"),
+        ("b.c", "int b(void) { return 2; }\n"),
+    )
+    cache = IndexCache()
+    cache.get(PROJECT, files)
+    spies = _install_spies(monkeypatch)
+    cache.get(Path("/q"), files)
+    assert spies.update_calls == []
+    assert len(spies.graph_calls) == 1
+
+
+def test_k5_old_graph_stays_and_hit_returns_the_updated_graph():
+    files = _files(
+        ("a.c", "int a(void) { return 1; }\n"),
+        ("b.c", "int b(void) { return 2; }\n"),
+    )
+    cache = IndexCache()
+    _index, graph = cache.get(PROJECT, files)
+    before = graph.snapshot()
+    edited = [files[0], ProjectFile(Path("b.c"), "int b(void) { return 9; }\n")]
+    _index, updated = cache.get(PROJECT, edited)
+    assert updated is not graph
+    assert graph.snapshot() == before
+    again = [ProjectFile(item.path, item.content) for item in edited]
+    _index, hit = cache.get(PROJECT, again)
+    assert hit is updated

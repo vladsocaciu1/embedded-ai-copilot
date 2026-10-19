@@ -5,11 +5,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from time import perf_counter
 
-from app.code_graph import CodeGraph, build_graph
+from app.code_graph import CodeGraph, build_graph, update_graph
 from app.code_index import build_index
 from app.models import FileSymbols, ProjectFile, ProjectIndex
 
 logger = logging.getLogger(__name__)
+
+INCREMENTAL_MIN_FILES = 200
+INCREMENTAL_SHARE_PCT = 2
 
 
 class IndexCache:
@@ -45,11 +48,10 @@ class IndexCache:
                 reused = n
                 parsed = 0
                 dropped = 0
-                hit = True
                 index = self._index
                 graph = self._graph
+                graph_state = "reused"
             else:
-                hit = False
                 changed = [
                     project_file
                     for project_file, (path, digest) in zip(files, fingerprint, strict=True)
@@ -73,10 +75,28 @@ class IndexCache:
                         parsed += 1
                     new_files[path] = (digest, symbols)
                     ordered.append(symbols)
+                same_paths = new_files.keys() == self._files.keys()
                 dropped = sum(path not in new_files for path in self._files)
                 self._files = new_files
                 index = ProjectIndex(files=tuple(ordered))
-                graph = build_graph(index)
+                limit = max(
+                    INCREMENTAL_MIN_FILES,
+                    n * INCREMENTAL_SHARE_PCT // 100,
+                )
+                if (
+                    self._graph is not None
+                    and self._index is not None
+                    and same_paths
+                    and 0 < parsed <= limit
+                ):
+                    changed_paths = [project_file.path for project_file in changed]
+                    graph = update_graph(
+                        self._graph, self._index, index, changed_paths
+                    )
+                    graph_state = "updated"
+                else:
+                    graph = build_graph(index)
+                    graph_state = "rebuilt"
                 self._index = index
                 self._graph = graph
                 self._fingerprint = fingerprint
@@ -84,7 +104,7 @@ class IndexCache:
             elapsed_ms = round((perf_counter() - started) * 1000)
             logger.info(
                 f"Index cache: {n} files, {reused} reused, {parsed} parsed, "
-                f"{dropped} dropped, graph {'reused' if hit else 'rebuilt'} in {elapsed_ms} ms."
+                f"{dropped} dropped, graph {graph_state} in {elapsed_ms} ms."
             )
             assert index is not None and graph is not None
             return index, graph
