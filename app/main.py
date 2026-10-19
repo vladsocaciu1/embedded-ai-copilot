@@ -30,6 +30,20 @@ async def process_prompt(request: AskRequest):
     except ai_service.ProjectLoadError:
         logger.exception("Project files could not be loaded.")
         raise HTTPException(status_code=500, detail="Project files could not be loaded.")
+    except ai_service.ProjectTooLargeError as error:
+        logger.warning(f"Prompt is {error.token_count} tokens, limit {error.limit}.")
+        if error.estimated:
+            size = f"at least {error.token_count} tokens (estimated)"
+        else:
+            size = f"{error.token_count} tokens"
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "Project is too large for the prompt budget: "
+                f"{size}, limit {error.limit}. "
+                "Point PROJECT_PATH at a smaller directory or raise MAX_PROMPT_TOKENS."
+            ),
+        )
     except ai_service.UpstreamRejectedError:
         logger.exception("AI provider rejected the request.")
         raise HTTPException(status_code=502, detail="AI provider rejected the request.")

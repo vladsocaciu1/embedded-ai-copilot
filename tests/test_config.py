@@ -5,12 +5,18 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 import app.config as config
-from app.config import DEFAULT_EXCLUDE_DIRS, DEFAULT_PROJECT_PATH, load_settings
+from app.config import (
+    DEFAULT_EXCLUDE_DIRS,
+    DEFAULT_MAX_PROMPT_TOKENS,
+    DEFAULT_PROJECT_PATH,
+    load_settings,
+)
 
 _DOTENV_TESTS = {
     "test_load_settings_honors_dotenv_file",
     "test_load_settings_honors_project_path_in_dotenv_file",
     "test_load_settings_honors_exclude_dirs_in_dotenv_file",
+    "test_load_settings_honors_max_prompt_tokens_in_dotenv_file",
 }
 
 
@@ -24,6 +30,7 @@ def stub_dotenv_and_clear_env(monkeypatch, request):
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("PROJECT_PATH", raising=False)
     monkeypatch.delenv("EXCLUDE_DIRS", raising=False)
+    monkeypatch.delenv("MAX_PROMPT_TOKENS", raising=False)
 
 def test_load_settings_returns_settings_for_valid_dir_and_env(tmp_path, monkeypatch):
 
@@ -401,5 +408,85 @@ def test_load_settings_honors_exclude_dirs_in_dotenv_file(tmp_path, monkeypatch)
 
     # Assert
     assert settings.exclude_dirs == ("vendor", "Generated")
+    assert settings.gemini_api_key == "from-dotenv-key"
+    assert settings.gemini_model == "from-dotenv-model"
+
+def test_load_settings_unset_max_prompt_tokens_uses_default(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.delenv("MAX_PROMPT_TOKENS", raising=False)
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.max_prompt_tokens == 200_000
+
+def test_load_settings_whitespace_max_prompt_tokens_uses_default(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("MAX_PROMPT_TOKENS", "   ")
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.max_prompt_tokens == DEFAULT_MAX_PROMPT_TOKENS
+
+def test_load_settings_strips_max_prompt_tokens(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("MAX_PROMPT_TOKENS", " 150000 ")
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.max_prompt_tokens == 150_000
+
+@pytest.mark.parametrize("raw", ["0", "-5", "abc", "1.5", "200_000", "+5"])
+def test_load_settings_invalid_max_prompt_tokens_raises_value_error(tmp_path, monkeypatch, raw):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("MAX_PROMPT_TOKENS", raw)
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="MAX_PROMPT_TOKENS must be a positive integer."):
+        load_settings(tmp_path)
+
+def test_load_settings_honors_max_prompt_tokens_in_dotenv_file(tmp_path, monkeypatch):
+
+    # Arrange
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (tmp_path / ".env").write_text(
+        "GEMINI_API_KEY=from-dotenv-key\n"
+        "GEMINI_MODEL=from-dotenv-model\n"
+        "MAX_PROMPT_TOKENS=150000\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    # setenv then delenv so monkeypatch records the names. delenv on an
+    # absent var records nothing, and load_dotenv writes them into os.environ.
+    monkeypatch.setenv("GEMINI_API_KEY", "placeholder")
+    monkeypatch.setenv("GEMINI_MODEL", "placeholder")
+    monkeypatch.setenv("MAX_PROMPT_TOKENS", "placeholder")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("MAX_PROMPT_TOKENS", raising=False)
+
+    # Act
+    settings = load_settings(project_dir)
+
+    # Assert
+    assert settings.max_prompt_tokens == 150_000
     assert settings.gemini_api_key == "from-dotenv-key"
     assert settings.gemini_model == "from-dotenv-model"
