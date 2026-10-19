@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.code_index import build_index, index_file
 from app.models import (
+    Call,
     FileSymbols,
     Include,
     ProjectFile,
@@ -423,3 +424,129 @@ def test_p4_sample_project():
         for include in by_path["src/app.c"].includes
     )
     assert all(not file_symbols.has_errors for file_symbols in index.files)
+
+
+def test_c1_calls_inside_a_function_body():
+    file_symbols = _index(
+        "src/x.c",
+        """\
+        void worker(void)
+        {
+            g(1);
+            X = y(z(5));
+            if (HAL_GetTick() > 1) {}
+        }
+        """,
+    )
+
+    assert file_symbols.calls == (
+        Call("worker", "g", 3, False),
+        Call("worker", "y", 4, False),
+        Call("worker", "z", 4, False),
+        Call("worker", "HAL_GetTick", 5, False),
+    )
+
+
+def test_c2_member_calls_recorded_indirect_calls_skipped():
+    file_symbols = _index(
+        "src/x.c",
+        """\
+        void worker(void)
+        {
+            h->cb(2);
+            s.m();
+            (*fp)(3);
+            tbl[i]();
+        }
+        """,
+    )
+
+    assert file_symbols.calls == (
+        Call("worker", "cb", 3, True),
+        Call("worker", "m", 4, True),
+    )
+
+
+def test_c3_cpp_qualified_calls_lambda_and_inline_method():
+    file_symbols = _index(
+        "src/controller.cpp",
+        """\
+        namespace drivers {
+        class Controller {
+        public:
+            void ping() { helper(); }
+        };
+        void Controller::send() {
+            ns::k();
+            t<int>(4);
+            auto callback = []() { inner(); };
+        }
+        }
+        """,
+    )
+
+    assert file_symbols.calls == (
+        Call("drivers::Controller::ping", "helper", 4, False),
+        Call("drivers::Controller::send", "ns::k", 7, False),
+        Call("drivers::Controller::send", "t", 8, False),
+        Call("drivers::Controller::send", "inner", 9, False),
+    )
+
+
+def test_c4_function_like_macro_is_a_call():
+    file_symbols = _index(
+        "src/x.c",
+        """\
+        void worker(void)
+        {
+            __HAL_LOCK(h);
+        }
+        """,
+    )
+
+    assert file_symbols.calls == (Call("worker", "__HAL_LOCK", 3, False),)
+
+
+def test_c5_file_scope_initializer_and_prototype_have_no_calls():
+    file_symbols = _index(
+        "src/x.c",
+        """\
+        int x = f();
+        void proto(void);
+        """,
+    )
+
+    assert file_symbols.calls == ()
+
+
+def test_c6_weak_function_and_calls_after_a_parse_error():
+    file_symbols = _index(
+        "src/x.c",
+        """\
+        __weak void HAL_MspInit(void) { Gpio_Init(); }
+        int broken(int x) { return x + ; }
+        void next(void) { kept(); }
+        """,
+    )
+
+    assert file_symbols.calls == (
+        Call("HAL_MspInit", "Gpio_Init", 1, False),
+        Call("next", "kept", 3, False),
+    )
+
+
+def test_c7_call_line_past_300():
+    lines = ["int pad;"] * 310
+    lines.extend(
+        [
+            "void late(void)",
+            "{",
+            "    far_call();",
+            "}",
+        ]
+    )
+    file_symbols = index_file(
+        ProjectFile(Path("src/long.c"), "\n".join(lines) + "\n")
+    )
+
+    assert file_symbols.calls == (Call("late", "far_call", 313, False),)
