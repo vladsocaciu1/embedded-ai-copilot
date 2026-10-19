@@ -3,5 +3,5 @@ from dataclasses import dataclass
 
 @dataclass
 class ProjectFile:
-    path: Path
+    path: Path  # relative to the project root
     content: str

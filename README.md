@@ -22,8 +22,8 @@ flowchart LR
 
 - `app/main.py` is the HTTP layer. It serves `GET /` and `POST /ask`, checks the question, and maps service errors to status codes. It does not read the project or call Gemini.
 - `app/ai_service.py` orchestrates one answer: load files, build the prompt, call Gemini, and raise `ProjectLoadError`, `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
-- `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It does not build prompts or call Gemini.
-- `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It does not load the tree or call Gemini.
+- `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
+- `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It adds a file/line count header. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
 - `app/models.py` holds the `ProjectFile` dataclass. The HTTP body is `AskRequest` in `main.py`.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
@@ -56,7 +56,9 @@ Startup fails if either value is missing or empty (`RuntimeError: GEMINI_API_KEY
 
 The running app reads one project directory. `PROJECT_PATH` unset, empty, or whitespace-only uses `sample_project/`. A relative path resolves against the repo root, not the process cwd. A leading `~` is expanded. An absolute path is recommended. The path must be an existing directory or startup fails. The path is read once at startup; restart the app after changing it. One project is used per process. It loads `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`, `.inl`, `.s`, `.asm`, and `.ld` files, including files in subdirectories. Suffixes are matched case-insensitively, so `.S` and `.s` assembly and `.ld` linker scripts load.
 
-What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB are skipped with a warning. A non-UTF-8 file is skipped with a warning (`Skipping non-UTF-8 file: ...`).
+What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB are skipped with a warning. A file that isn't valid UTF-8 is read as Windows-1252 (cp1252) with a warning; if neither works it's skipped with a warning.
+
+Prompt: files are sorted by path, paths are relative to the project dir, a one-line file/line count header comes first, and each file header shows its line count.
 
 ## Run
 
@@ -66,7 +68,7 @@ From the repo root:
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Logs go to `logs/app.log` and to the console. The `logs/` directory is created when the app starts.
+Logs go to `logs/app.log` and to the console, including the startup configuration messages. The `logs/` directory is created when the app starts.
 
 ## API
 

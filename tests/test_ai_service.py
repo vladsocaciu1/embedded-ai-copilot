@@ -265,6 +265,41 @@ def test_generate_answer_exclude_dirs_omits_vendor_file(ai_service, monkeypatch,
     assert main_content in contents
 
 
+def test_generate_answer_contents_omit_absolute_project_path(ai_service, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    assert str(tmp_path) not in contents
+    assert "main.c" in contents
+
+
+def test_generate_answer_repeated_calls_send_identical_contents(ai_service, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    for relative in ("src/z.c", "Core/a.c", "src/drivers/x.c", "src/a.c"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("int x;\n", encoding="utf-8")
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+    first = client.models.generate_content.call_args.kwargs["contents"]
+    module.generate_answer(QUESTION)
+    second = client.models.generate_content.call_args.kwargs["contents"]
+
+    # Assert
+    assert first == second
+
+
 def test_empty_upstream_response_error_subclasses_upstream_rejected(ai_service):
 
     # Arrange
