@@ -74,9 +74,19 @@ def load_project_files(
                 with file.open("r", encoding="utf-8-sig") as f:
                     content = f.read()
             except UnicodeDecodeError:
-                logger.warning(f"Skipping non-UTF-8 file: {file}")
-                continue
+                try:
+                    with file.open("r", encoding="cp1252") as f:
+                        content = f.read()
+                except UnicodeDecodeError:
+                    logger.warning(
+                        f"Skipping file that is neither UTF-8 nor cp1252: {file}"
+                    )
+                    continue
+                logger.warning(f"Decoded {file} as cp1252 (not valid UTF-8).")
 
-            project_files.append(ProjectFile(path=file, content=content))
+            project_files.append(
+                ProjectFile(path=file.relative_to(project_path), content=content)
+            )
 
+    project_files.sort(key=lambda f: f.path.parts)
     return project_files

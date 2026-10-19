@@ -63,3 +63,49 @@ def test_build_assistant_prompt_empty_files():
     assert "Question:" in prompt
     assert question in prompt
 
+def test_build_assistant_prompt_file_count(project_files):
+    question = "What does this code do?"
+
+    prompt = build_assistant_prompt(project_files, question)
+
+    assert "2 files" in prompt
+
+def test_build_assistant_prompt_line_count():
+    project_files = [
+        ProjectFile(path=Path("a.c"), content="one\ntwo\nthree\n"),
+        ProjectFile(path=Path("b.h"), content="one\ntwo\n"),
+    ]
+    question = "What does this code do?"
+
+    prompt = build_assistant_prompt(project_files, question)
+
+    assert "5 lines" in prompt
+
+def test_build_assistant_prompt_per_file_line_count():
+    project_files = [
+        ProjectFile(path=Path("file1.c"), content="one\ntwo\nthree\n"),
+    ]
+    question = "What does this code do?"
+
+    prompt = build_assistant_prompt(project_files, question)
+
+    assert "file1.c (3 lines)" in prompt
+
+def test_build_assistant_prompt_posix_path():
+    project_files = [
+        ProjectFile(path=Path("src") / "can.c", content="int x;\n"),
+    ]
+    question = "What does this code do?"
+
+    prompt = build_assistant_prompt(project_files, question)
+
+    assert "src/can.c" in prompt
+
+def test_build_assistant_prompt_empty_list_shows_zero_files():
+    question = "What does this code do?"
+
+    prompt = build_assistant_prompt([], question)
+
+    assert "0 files" in prompt
+    assert question in prompt
+

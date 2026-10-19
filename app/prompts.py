@@ -22,9 +22,23 @@ def build_assistant_prompt(project_files:list[ProjectFile], question: str) -> st
         str: The complete prompt to send to the AI model.
     """
 
+    header = _format_project_header(project_files)
     project_files_text = _format_project_context(project_files)
-    
-    return f"{assistant_prompt}\n\n{project_files_text}\n\nQuestion:\n{question}"
+    parts = [assistant_prompt, header]
+    if project_files_text:
+        parts.append(project_files_text)
+    parts.append(f"Question:\n{question}")
+    return "\n\n".join(parts)
+
+def _format_project_header(project_files: list[ProjectFile]) -> str:
+    file_count = len(project_files)
+    line_count = sum(
+        len(project_file.content.splitlines()) for project_file in project_files
+    )
+    return (
+        f"Project context: {file_count} files, {line_count} lines. "
+        "Paths are relative to the project root."
+    )
 
 def _format_project_context(project_files: list[ProjectFile]) -> str:
     """
@@ -39,9 +53,10 @@ def _format_project_context(project_files: list[ProjectFile]) -> str:
     sections = []
     
     for project_file in project_files:
+        line_count = len(project_file.content.splitlines())
         sections.append(f"""========================
-File: {project_file.path}
+File: {project_file.path.as_posix()} ({line_count} lines)
 ========================
 {project_file.content}""")
     
-    return"\n".join(sections)
+    return "\n".join(sections)

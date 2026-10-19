@@ -3,10 +3,11 @@ import logging
 from app.logging_config import setup_logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from app import ai_service
 
-# Set up and initialize logging
+# ai_service runs load_settings() at import; configure logging first
 setup_logging()
+from app import ai_service  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI()

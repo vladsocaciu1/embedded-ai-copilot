@@ -54,7 +54,9 @@ def test_load_project_files_paths_equal_source_paths(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == expected_paths
+    assert {project_file.path for project_file in project_files} == {
+        path.relative_to(tmp_path) for path in expected_paths
+    }
 
 def test_load_project_files_ignores_unsupported_files(tmp_path):
 
@@ -88,7 +90,9 @@ def test_load_project_files_finds_files_in_nested_directories(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == nested_paths
+    assert {project_file.path for project_file in project_files} == {
+        path.relative_to(tmp_path) for path in nested_paths
+    }
 
 def test_load_project_files_skips_directory_named_like_source_file(tmp_path):
 
@@ -102,7 +106,9 @@ def test_load_project_files_skips_directory_named_like_source_file(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {inner_file}
+    assert {project_file.path for project_file in project_files} == {
+        inner_file.relative_to(tmp_path)
+    }
 
 def test_load_project_files_empty_directory_returns_empty_list(tmp_path):
 
@@ -163,7 +169,7 @@ def test_load_project_files_skips_non_utf8_file(tmp_path):
 
     # Arrange
     (tmp_path / "good.c").write_text("int good = 1;\n", encoding="utf-8")
-    (tmp_path / "bad.c").write_bytes(b"\xff\xfe\xfa")
+    (tmp_path / "bad.c").write_bytes(b"\x81\x8d\x8f\x90\x9d")
 
     # Act
     project_files = load_project_files(tmp_path)
@@ -175,7 +181,7 @@ def test_load_project_files_warns_on_non_utf8_file(tmp_path, caplog):
 
     # Arrange
     (tmp_path / "good.c").write_text("int good = 1;\n", encoding="utf-8")
-    (tmp_path / "bad.c").write_bytes(b"\xff\xfe\xfa")
+    (tmp_path / "bad.c").write_bytes(b"\x81\x8d\x8f\x90\x9d")
     caplog.set_level(logging.WARNING)
 
     # Act
@@ -235,7 +241,9 @@ def test_load_project_files_skips_hidden_directories(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {kept}
+    assert {project_file.path for project_file in project_files} == {
+        kept.relative_to(tmp_path)
+    }
 
 def test_load_project_files_skips_build_directories(tmp_path):
 
@@ -255,7 +263,9 @@ def test_load_project_files_skips_build_directories(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {kept}
+    assert {project_file.path for project_file in project_files} == {
+        kept.relative_to(tmp_path)
+    }
 
 def test_load_project_files_loads_debug_directory(tmp_path):
 
@@ -268,7 +278,9 @@ def test_load_project_files_loads_debug_directory(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {kept}
+    assert {project_file.path for project_file in project_files} == {
+        kept.relative_to(tmp_path)
+    }
 
 def test_load_project_files_applies_exclude_dir_patterns(tmp_path):
 
@@ -289,7 +301,9 @@ def test_load_project_files_applies_exclude_dir_patterns(tmp_path):
     )
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {kept}
+    assert {project_file.path for project_file in project_files} == {
+        kept.relative_to(tmp_path)
+    }
 
 def test_load_project_files_does_not_exclude_root_by_name(tmp_path):
 
@@ -303,7 +317,9 @@ def test_load_project_files_does_not_exclude_root_by_name(tmp_path):
     project_files = load_project_files(root, ("vendor",))
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {kept}
+    assert {project_file.path for project_file in project_files} == {
+        kept.relative_to(root)
+    }
 
 def test_load_project_files_default_exclude_dirs_loads_vendor(tmp_path):
 
@@ -316,7 +332,9 @@ def test_load_project_files_default_exclude_dirs_loads_vendor(tmp_path):
     project_files = load_project_files(tmp_path)
 
     # Assert
-    assert {project_file.path for project_file in project_files} == {kept}
+    assert {project_file.path for project_file in project_files} == {
+        kept.relative_to(tmp_path)
+    }
 
 def test_load_project_files_loads_generated_style_names(tmp_path):
 
@@ -394,3 +412,98 @@ def test_load_project_files_does_not_touch_pruned_directory(tmp_path, monkeypatc
 
     # Assert
     assert {project_file.path.name for project_file in project_files} == {"main.c"}
+
+def test_load_project_files_path_is_relative_to_project_root(tmp_path):
+
+    # Arrange
+    source = tmp_path / "src" / "main.c"
+    source.parent.mkdir()
+    source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+
+    # Act
+    project_files = load_project_files(tmp_path)
+
+    # Assert
+    assert len(project_files) == 1
+    assert project_files[0].path == Path("src/main.c")
+    assert not project_files[0].path.is_absolute()
+
+def test_load_project_files_sorts_by_relative_path_parts(tmp_path):
+
+    # Arrange
+    names = [
+        "src/z.c",
+        "Core/a.c",
+        "src/drivers/x.c",
+        "src/a.c",
+        "inc/a.h",
+        "src-x/b.c",
+    ]
+    for name in names:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("int x;\n", encoding="utf-8")
+
+    # Act
+    project_files = load_project_files(tmp_path)
+
+    # Assert
+    assert [project_file.path.as_posix() for project_file in project_files] == [
+        "Core/a.c",
+        "inc/a.h",
+        "src/a.c",
+        "src/drivers/x.c",
+        "src/z.c",
+        "src-x/b.c",
+    ]
+
+def test_load_project_files_decodes_cp1252_apostrophe(tmp_path):
+
+    # Arrange
+    (tmp_path / "note.c").write_bytes(b"// it\x92s\nint x;\n")
+
+    # Act
+    project_files = load_project_files(tmp_path)
+
+    # Assert
+    assert len(project_files) == 1
+    assert project_files[0].content == "// it\u2019s\nint x;\n"
+
+def test_load_project_files_warns_on_cp1252_fallback(tmp_path, caplog):
+
+    # Arrange
+    (tmp_path / "note.c").write_bytes(b"// it\x92s\nint x;\n")
+    caplog.set_level(logging.WARNING)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    assert any(
+        record.levelno == logging.WARNING and "note.c" in record.getMessage()
+        for record in caplog.records
+    )
+
+def test_load_project_files_cp1252_crlf_becomes_lf(tmp_path):
+
+    # Arrange
+    (tmp_path / "note.c").write_bytes(b"// it\x92s\r\nint x;\r\n")
+
+    # Act
+    project_files = load_project_files(tmp_path)
+
+    # Assert
+    assert len(project_files) == 1
+    assert project_files[0].content == "// it\u2019s\nint x;\n"
+
+def test_load_project_files_utf8_logs_no_warning(tmp_path, caplog):
+
+    # Arrange
+    (tmp_path / "main.c").write_text("int x;\n", encoding="utf-8")
+    caplog.set_level(logging.WARNING)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    assert not any(record.levelno == logging.WARNING for record in caplog.records)
