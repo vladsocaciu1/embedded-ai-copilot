@@ -731,7 +731,14 @@ def test_generate_answer_char_route_uses_partial_context(ai_service, monkeypatch
     assert answer.context.files_included == ("src/can.c",)
     assert answer.context.files_total == 3
     assert answer.context.map_tier == "focused"
-    assert answer.text.rstrip().endswith("- src/can.c")
+    assert answer.text.endswith(
+        "\n\n---\n"
+        "Partial context: this answer is based on 1 of 3 project files, because the "
+        "whole project does not fit the 10000-token prompt budget. The included files "
+        "are listed in context.files_included."
+    )
+    assert "Files included:" not in answer.text
+    assert "\n- " not in answer.text
 
 
 def test_generate_answer_full_mode_context_matches_model_text(ai_service):

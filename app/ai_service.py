@@ -314,13 +314,14 @@ def _send(prepared: PreparedPrompt) -> Answer:
             logger.error("Gemini returned an empty response.")
             raise EmptyUpstreamResponseError("AI provider returned an empty response.")
         if prepared.mode == "partial":
-            included_posix = tuple(path.as_posix() for path in prepared.included)
+            k = len(prepared.included)
+            n = prepared.files_total
+            limit = prepared.limit
             answer += (
                 "\n\n---\n"
-                f"Partial context: this answer is based on {len(prepared.included)} of "
-                f"{prepared.files_total} project files, because the whole project does "
-                f"not fit the {prepared.limit}-token prompt budget. Files included:\n"
-                + "\n".join(f"- {path}" for path in included_posix)
+                f"Partial context: this answer is based on {k} of {n} project files, "
+                f"because the whole project does not fit the {limit}-token prompt budget. "
+                "The included files are listed in context.files_included."
             )
         return Answer(
             text=answer,
