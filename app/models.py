@@ -83,4 +83,19 @@ class ResolvedInclude:
 @dataclass(frozen=True)
 class ProjectMap:
     text: str
-    tier: Literal["full", "no_macros", "no_statics", "counts", "omitted"]
+    tier: Literal["full", "no_macros", "no_statics", "counts", "omitted", "focused"]
+
+
+@dataclass(frozen=True)
+class AnswerContext:
+    mode: Literal["full", "partial"]
+    files_total: int
+    files_included: tuple[str, ...]  # posix; full mode: every loaded file, in load order
+    prompt_tokens: int                # exact count of the prompt that was sent
+    map_tier: str | None              # ProjectMap.tier; None if full mode dropped the map
+
+
+@dataclass(frozen=True)
+class Answer:
+    text: str
+    context: AnswerContext

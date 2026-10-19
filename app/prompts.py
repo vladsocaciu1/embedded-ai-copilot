@@ -1,5 +1,5 @@
 import logging
-
+from collections.abc import Collection, Sequence
 from pathlib import Path
 
 from app.code_graph import CodeGraph
@@ -21,6 +21,73 @@ _TYPE_KINDS = frozenset({
 })
 _DETAIL_TIERS = ("full", "no_macros", "no_statics")
 _TIERS = (*_DETAIL_TIERS, "counts")
+
+
+def build_focused_map(
+    index: ProjectIndex,
+    graph: CodeGraph,
+    ranked: Sequence[Path],
+    included: Collection[Path],
+    max_chars: int,
+) -> ProjectMap:
+    by_path = {file.path: file for file in index.files}
+    included_paths = {path for path in included}
+    seen: set[Path] = set()
+    selection: list[Path] = []
+    for path in ranked:
+        if path in included_paths and path in by_path and path not in seen:
+            selection.append(path)
+            seen.add(path)
+    for path in ranked:
+        if path in by_path and path not in seen:
+            selection.append(path)
+            seen.add(path)
+
+    n = len(index.files)
+    chosen: list[tuple[Path, str]] = []
+    chosen_body = 0
+    for path in selection:
+        block = _focused_block(by_path[path], path in included_paths)
+        total = len(_focused_header(len(chosen) + 1, n)) + chosen_body + 1 + len(block)
+        if total <= max_chars:
+            chosen.append((path, block))
+            chosen_body += 1 + len(block)
+    if not chosen:
+        return ProjectMap(text=_focused_header(0, n), tier="focused")
+    chosen.sort(key=lambda item: item[0].parts)
+    text = "\n".join(
+        [_focused_header(len(chosen), n), *(block for _path, block in chosen)]
+    )
+    return ProjectMap(text=text, tier="focused")
+
+
+def build_partial_prompt(
+    project_files: list[ProjectFile],
+    included: Sequence[Path],
+    question: str,
+    project_map: str,
+    limit: int,
+) -> str:
+    by_path = {project_file.path: project_file for project_file in project_files}
+    included_files = [by_path[path] for path in included]
+    n = len(project_files)
+    k = len(included)
+    notice = (
+        f"Partial context: the project has {n} files, more than fits the {limit}-token "
+        "prompt budget. Only the "
+        f"{k} files below were selected for this question (names in the question, "
+        "then the parser's index: definitions, .c/.h pairs, callers, callees, "
+        "includes, matching names). Do not assume anything about files that are "
+        "not included; say so when the answer depends on them."
+    )
+    parts = [
+        assistant_prompt,
+        project_map,
+        notice,
+        _format_project_context(included_files),
+        f"Question:\n{question}",
+    ]
+    return "\n\n".join(parts)
 
 
 def build_project_map(index: ProjectIndex, graph: CodeGraph, max_chars: int) -> ProjectMap:
@@ -60,6 +127,22 @@ def build_assistant_prompt(
         parts.append(project_files_text)
     parts.append(f"Question:\n{question}")
     return "\n\n".join(parts)
+
+
+def _focused_header(chosen: int, total: int) -> str:
+    return (
+        f"Project map (focused): {chosen} of {total} project files, chosen for the "
+        'question. Built by a parser. Files marked "(included below)" are shown in '
+        "full below; the others are listed for orientation only and cannot be read. "
+        "Line ranges are 1-based and inclusive."
+    )
+
+
+def _focused_block(file: FileSymbols, included: bool) -> str:
+    marker = " (included below)" if included else ""
+    lines = [f"{file.path.as_posix()}{_marker(file)}{marker}"]
+    lines.extend(_field_lines(file, "no_macros"))
+    return "\n".join(lines)
 
 
 def _render_map(
