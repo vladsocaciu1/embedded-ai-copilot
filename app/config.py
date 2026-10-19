@@ -18,13 +18,43 @@ class Settings:
     gemini_model: str
 
 
-def load_settings(project_path: Path = DEFAULT_PROJECT_PATH) -> Settings:
+def _resolve_project_path(raw: str | Path) -> Path:
+    # expanduser() first. Relative paths anchor at BASE_DIR (repo root), not cwd.
+    # BASE_DIR is read here so tests can monkeypatch the module global.
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path.resolve()
+
+
+def _project_path_from_env() -> Path:
+    configured = os.getenv("PROJECT_PATH", "").strip()
+    if not configured:
+        return DEFAULT_PROJECT_PATH
+    return _resolve_project_path(configured)
+
+
+def _require_project_directory(project_path: Path) -> None:
     if not project_path.exists():
         logger.error(f"Project path {project_path} does not exist.")
         raise FileNotFoundError(f"Project path {project_path} does not exist.")
+    if not project_path.is_dir():
+        logger.error(f"Project path {project_path} is not a directory.")
+        raise NotADirectoryError(f"Project path {project_path} is not a directory.")
 
+
+def load_settings(project_path: Path | None = None) -> Settings:
     # Plain load_dotenv() searches from this file, not the process cwd.
+    # PROJECT_PATH is read after this so it can live in .env.
     load_dotenv(find_dotenv(usecwd=True))
+
+    # Explicit argument, then PROJECT_PATH, then DEFAULT_PROJECT_PATH.
+    if project_path is None:
+        project_path = _project_path_from_env()
+    else:
+        project_path = _resolve_project_path(project_path)
+
+    _require_project_directory(project_path)
 
     gemini_api_key = os.getenv("GEMINI_API_KEY")
     if not gemini_api_key:
@@ -35,6 +65,8 @@ def load_settings(project_path: Path = DEFAULT_PROJECT_PATH) -> Settings:
     if not gemini_model:
         logger.error("GEMINI_MODEL is not set.")
         raise RuntimeError("GEMINI_MODEL is not set.")
+
+    logger.info(f"Project path {project_path}.")
 
     return Settings(
         project_path=project_path,

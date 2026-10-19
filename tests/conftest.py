@@ -18,6 +18,7 @@ def ai_service(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-DO-NOT-LOG")
     monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("PROJECT_PATH", str(tmp_path))
     (tmp_path / "main.c").write_text("int answer = 42;\n", encoding="utf-8")
 
     # load_settings() calls load_dotenv on first import. Names already set
