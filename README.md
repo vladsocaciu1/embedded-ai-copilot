@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 3 complete.
+Phase 3 complete. Phase 4 (hardening) in progress.
 
 ## Request path
 
@@ -245,8 +245,9 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 2. Phase 1.5: engineering quality (done)
 3. Phase 2: smarter project loading (done)
 4. Phase 3: tree-sitter / code structure (done)
-5. Phase 4: RAG / embeddings / ChromaDB
-6. Phase 5: agentic AI
+5. Phase 4: hardening: MIT license, Gemini rate-limit retries, incremental graph updates (in progress)
+6. Phase 5: RAG / embeddings / ChromaDB
+7. Phase 6: agentic AI
 
 ## Layout
 
@@ -294,7 +295,14 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── test_prompts.py
 │   └── test_selection_eval.py
 ├── .gitignore
+├── LICENSE
 ├── pyproject.toml
 ├── README.md
 └── uv.lock
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Vlad Socaciu.
+
+The STM32Cube packages used in the manual checks are not part of this repository and keep their own licenses.
