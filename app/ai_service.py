@@ -5,15 +5,16 @@ from contextlib import contextmanager
 from google import genai
 from google.genai import errors
 
-from app.code_graph import build_graph
-from app.code_index import build_index
 from app.config import load_settings
+from app.index_cache import IndexCache
 from app.project_loader import load_project_files
 from app.prompts import build_assistant_prompt, build_project_map
 
 settings = load_settings()
 
 client = genai.Client(api_key=settings.gemini_api_key)
+
+index_cache = IndexCache()
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +113,7 @@ def generate_answer(question: str) -> str:
     base_prompt = build_assistant_prompt(project_files, question)
     _precheck(base_prompt)
 
-    index = build_index(project_files)
-    graph = build_graph(index)
+    index, graph = index_cache.get(settings.project_path, project_files)
     limit = settings.max_prompt_tokens
     cap = int(limit * MAP_BUDGET_SHARE * MAP_CHARS_PER_TOKEN)
     project_map = build_project_map(index, graph, max_chars=cap)
@@ -129,6 +129,7 @@ def generate_answer(question: str) -> str:
         prompt = base_prompt
         count = _count_tokens(prompt)
     if count > limit:
+        logger.warning(f"Prompt is {count} tokens (limit {limit}).")
         raise ProjectTooLargeError(count, limit, estimated=False)
     logger.info(f"Prompt is {count} tokens (limit {limit}).")
 

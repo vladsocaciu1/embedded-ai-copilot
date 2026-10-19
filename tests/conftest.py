@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.config import DEFAULT_EXCLUDE_DIRS, DEFAULT_MAX_PROMPT_TOKENS, Settings
+from app.index_cache import IndexCache
 
 
 @pytest.fixture
@@ -13,8 +14,9 @@ def ai_service(monkeypatch, tmp_path):
 
     app.ai_service calls load_settings() and genai.Client() at import time.
     The env vars have to be set before that import. Client() does not make a
-    network call. The module stays in sys.modules; each test rebinds client
-    and settings so later tests still see a MagicMock and this tmp_path.
+    network call.     The module stays in sys.modules; each test rebinds client,
+    settings, and index_cache so later tests still see a MagicMock,
+    this tmp_path, and a cold cache.
     """
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-DO-NOT-LOG")
     monkeypatch.setenv("GEMINI_MODEL", "test-model")
@@ -43,4 +45,5 @@ def ai_service(monkeypatch, tmp_path):
             gemini_model="test-model",
         ),
     )
+    monkeypatch.setattr(module, "index_cache", IndexCache())
     return module, client

@@ -3,6 +3,8 @@ import logging
 import pytest
 from google.genai import errors
 
+from app.code_graph import build_graph
+from app.code_index import build_index
 from app.config import Settings
 
 QUESTION = "Where is the answer initialized?"
@@ -495,20 +497,18 @@ def test_generate_answer_precheck_skips_index(ai_service, monkeypatch):
     # Arrange
     module, client = ai_service
     monkeypatch.setattr(module, "settings", _settings_with_limit(module, 1))
-    calls = []
 
-    def spy(files):
-        calls.append(files)
-        raise AssertionError("build_index should not run")
+    class _Cache:
+        def get(self, project_path, files):
+            raise AssertionError("index_cache.get should not run")
 
-    monkeypatch.setattr(module, "build_index", spy)
+    monkeypatch.setattr(module, "index_cache", _Cache())
 
     # Act / Assert
     with pytest.raises(module.ProjectTooLargeError) as exc_info:
         module.generate_answer(QUESTION)
 
     assert exc_info.value.estimated is True
-    assert calls == []
     client.models.count_tokens.assert_not_called()
 
 
@@ -604,3 +604,74 @@ def test_generate_answer_logs_map_tier_without_map_text(ai_service, caplog, tmp_
     )
     assert all(map_text not in record.message for record in caplog.records)
     assert "UNIQUE_MAP_TEXT_zz9" not in caplog.text
+
+
+def test_generate_answer_unchanged_project_builds_index_once(ai_service, monkeypatch):
+
+    # Arrange
+    module, client = ai_service
+    index_calls = []
+    graph_calls = []
+
+    def spy_index(project_files):
+        index_calls.append(tuple(project_files))
+        return build_index(project_files)
+
+    def spy_graph(index):
+        graph_calls.append(index)
+        return build_graph(index)
+
+    monkeypatch.setattr("app.index_cache.build_index", spy_index)
+    monkeypatch.setattr("app.index_cache.build_graph", spy_graph)
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+    first = client.models.generate_content.call_args.kwargs["contents"]
+    module.generate_answer(QUESTION)
+    second = client.models.generate_content.call_args.kwargs["contents"]
+
+    # Assert
+    assert len(index_calls) == 1
+    assert len(graph_calls) == 1
+    assert first == second
+
+
+def test_generate_answer_edited_file_updates_map(ai_service, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.return_value.text = "ok"
+    module.generate_answer(QUESTION)
+    (tmp_path / "main.c").write_text(
+        "int g(void)\n{\n    return 2;\n}\n",
+        encoding="utf-8",
+    )
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    map_section = contents.split("========================", 1)[0]
+    assert "g 1-4" in map_section
+
+
+def test_generate_answer_over_budget_logs_warning(ai_service, monkeypatch, caplog):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 100_000))
+    client.models.count_tokens.return_value.total_tokens = 100_001
+    caplog.set_level(logging.WARNING)
+
+    # Act / Assert
+    with pytest.raises(module.ProjectTooLargeError):
+        module.generate_answer(QUESTION)
+
+    assert any(
+        record.levelno == logging.WARNING
+        and record.name == "app.ai_service"
+        and record.message == "Prompt is 100001 tokens (limit 100000)."
+        for record in caplog.records
+    )
