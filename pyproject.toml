@@ -8,6 +8,7 @@ authors = [{ name = "Vlad Socaciu" }]
 dependencies = [
     "fastapi>=0.141.1",
     "google-genai>=2.16.0",
+    "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
     "tree-sitter>=0.26.0,<0.27",
     "tree-sitter-c>=0.24.2,<0.25",

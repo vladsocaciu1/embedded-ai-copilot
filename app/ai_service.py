@@ -9,6 +9,7 @@ from typing import Literal
 from google import genai
 from google.genai import errors
 
+from app import gemini_retry
 from app.code_graph import CodeGraph
 from app.config import load_settings
 from app.context_selector import pack_files, rank_files_detailed
@@ -67,11 +68,27 @@ class UpstreamUnavailableError(AIServiceError):
     """Gemini is unavailable (5xx or another API error)."""
 
 
+class RateLimitedError(AIServiceError):
+    """Gemini rate limit, still hit after retries."""
+
+    def __init__(self, retry_after: int):
+        self.retry_after = retry_after
+        super().__init__(
+            f"AI provider rate limit reached. Retry after {retry_after} seconds."
+        )
+
+
 @contextmanager
 def _upstream_errors():
     try:
         yield
     except errors.ClientError as e:
+        if e.code == 429:
+            retry_after = gemini_retry.retry_after_seconds(e)
+            logger.warning(
+                f"Gemini rate limit: retries exhausted, retry after {retry_after} s."
+            )
+            raise RateLimitedError(retry_after) from e
         # 4xx errors
         logger.exception("Client error.")
         raise UpstreamRejectedError("AI provider rejected the request.") from e
@@ -83,11 +100,20 @@ def _upstream_errors():
         # Any other API error
         logger.exception("API error.")
         raise UpstreamUnavailableError("AI provider is unavailable.") from e
+    except gemini_retry.TRANSPORT_ERRORS as e:
+        logger.exception("Transport error.")
+        raise UpstreamUnavailableError("AI provider is unavailable.") from e
 
 
-def _count_tokens(prompt: str) -> int:
+def _count_tokens(prompt: str, budget: gemini_retry.RetryBudget) -> int:
     with _upstream_errors():
-        response = client.models.count_tokens(model=settings.gemini_model, contents=prompt)
+        response = gemini_retry.call_with_retries(
+            lambda: client.models.count_tokens(
+                model=settings.gemini_model, contents=prompt
+            ),
+            budget,
+            "count_tokens",
+        )
 
     count = response.total_tokens
     if count is None:
@@ -242,12 +268,21 @@ def generate_answer(question: str) -> Answer:
     Returns:
         Answer: The generated answer and the context that was sent.
     """
-    return _send(_prepare(question, _count_tokens, "count"))
+    budget = gemini_retry.RetryBudget()
+    prepared = _prepare(
+        question, lambda prompt: _count_tokens(prompt, budget), "count"
+    )
+    return _send(prepared, budget)
 
 
 def dry_run(question: str, exact: bool = False) -> PreparedPrompt:
-    counter = _count_tokens if exact else _estimate_tokens
-    token_source: Literal["count", "estimate"] = "count" if exact else "estimate"
+    if exact:
+        budget = gemini_retry.RetryBudget()
+        counter: Callable[[str], int] = lambda prompt: _count_tokens(prompt, budget)
+        token_source: Literal["count", "estimate"] = "count"
+    else:
+        counter = _estimate_tokens
+        token_source = "estimate"
     prepared = _prepare(question, counter, token_source)
     logger.info(
         f"Dry run: mode {prepared.mode}, {prepared.token_count} tokens "
@@ -294,16 +329,20 @@ def _block(path: Path, content: str) -> int:
     return len(content) + len(path.as_posix()) + 64
 
 
-def _send(prepared: PreparedPrompt) -> Answer:
+def _send(prepared: PreparedPrompt, budget: gemini_retry.RetryBudget) -> Answer:
     logger.info(f"Prompt is {prepared.token_count} tokens (limit {prepared.limit}).")
     logger.info("Sending request to Gemini API.")
     start_time = time.perf_counter()
 
     try:
         with _upstream_errors():
-            response = client.models.generate_content(
-                model=settings.gemini_model,
-                contents=prepared.prompt,
+            response = gemini_retry.call_with_retries(
+                lambda: client.models.generate_content(
+                    model=settings.gemini_model,
+                    contents=prepared.prompt,
+                ),
+                budget,
+                "generate_content",
             )
 
         logger.info("Received response from Gemini API.")

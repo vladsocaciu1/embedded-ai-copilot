@@ -460,3 +460,100 @@ def test_lifespan_warms_index_in_a_thread(ai_service, monkeypatch):
     # Act / Assert
     with TestClient(app, raise_server_exceptions=False):
         assert started.wait(5)
+
+
+def _retry_info(delay: str | None):
+    from google.genai import errors
+
+    body = {"message": "rate limit", "status": "RESOURCE_EXHAUSTED"}
+    if delay is not None:
+        body["details"] = [
+            {
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": delay,
+            }
+        ]
+    return errors.ClientError(429, body)
+
+
+def test_a1_ask_rate_limit_returns_429(api_client, ai_service):
+    # Arrange
+    _module, client = ai_service
+    client.models.generate_content.side_effect = _retry_info("7s")
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "7"
+    assert response.json()["detail"] == (
+        "AI provider rate limit reached. Retry after 7 seconds."
+    )
+
+
+def test_a2_context_exact_rate_limit_matches_ask(api_client, ai_service):
+    # Arrange
+    _module, client = ai_service
+    client.models.count_tokens.side_effect = _retry_info("7s")
+    question = {"question": "Where is the answer initialized?"}
+
+    # Act
+    ask = api_client.post("/ask", json=question)
+    context = api_client.post("/context", params={"exact": True}, json=question)
+
+    # Assert
+    assert context.status_code == ask.status_code == 429
+    assert context.headers["retry-after"] == ask.headers["retry-after"] == "7"
+    assert context.json()["detail"] == ask.json()["detail"]
+    assert context.json()["detail"] == (
+        "AI provider rate limit reached. Retry after 7 seconds."
+    )
+
+
+def test_a3_rate_limit_without_hint_uses_60_seconds(api_client, ai_service):
+    # Arrange
+    _module, client = ai_service
+    client.models.generate_content.side_effect = _retry_info(None)
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "60"
+    assert response.json()["detail"] == (
+        "AI provider rate limit reached. Retry after 60 seconds."
+    )
+
+
+def test_a4_connect_error_returns_503(api_client, ai_service):
+    # Arrange
+    import httpx
+
+    _module, client = ai_service
+    client.models.generate_content.side_effect = httpx.ConnectError("connection refused")
+
+    # Act
+    response = api_client.post("/ask", json={"question": "Where is the answer initialized?"})
+
+    # Assert
+    assert response.status_code == 503
+    assert response.json()["detail"] == "AI provider is unavailable."
+
+
+def test_a5_context_without_exact_ignores_429(api_client, ai_service):
+    # Arrange
+    _module, client = ai_service
+    client.models.count_tokens.side_effect = _retry_info("7s")
+    client.models.generate_content.side_effect = _retry_info("7s")
+
+    # Act
+    response = api_client.post(
+        "/context", json={"question": "Where is the answer initialized?"}
+    )
+
+    # Assert
+    assert response.status_code == 200
+    client.models.count_tokens.assert_not_called()
+    client.models.generate_content.assert_not_called()

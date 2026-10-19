@@ -27,7 +27,8 @@ flowchart LR
 ## Modules
 
 - `app/main.py` is the HTTP layer. It serves `GET /`, `POST /ask`, and `POST /context`, checks the question, and maps service errors to the same status codes for both POST endpoints. A lifespan thread warms the index at startup. It does not read the project or call Gemini.
-- `app/ai_service.py` prepares one prompt on a path shared by `generate_answer` and `dry_run`: load files, get the index and graph from the cache, then route. Projects that fit use the full project map and count tokens (retrying once without the map if the map pushed the prompt over budget). Projects that do not fit use partial mode: a focused map, whole files selected for the question, and a partial-context notice. `generate_answer` sends that prompt to Gemini and, in partial mode, adds a footer to the answer. `dry_run` returns the same prompt and does not call Gemini. It estimates tokens from the character length unless `exact` is set, in which case it uses the same token count as `/ask`. It raises `ProjectLoadError`, `ProjectTooLargeError` (413, only when no selected file fits), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
+- `app/ai_service.py` prepares one prompt on a path shared by `generate_answer` and `dry_run`: load files, get the index and graph from the cache, then route. Projects that fit use the full project map and count tokens (retrying once without the map if the map pushed the prompt over budget). Projects that do not fit use partial mode: a focused map, whole files selected for the question, and a partial-context notice. `generate_answer` sends that prompt to Gemini and, in partial mode, adds a footer to the answer. `dry_run` returns the same prompt and does not call Gemini. It estimates tokens from the character length unless `exact` is set, in which case it uses the same token count as `/ask`. It raises `ProjectLoadError`, `ProjectTooLargeError` (413, only when no selected file fits), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), `UpstreamUnavailableError`, or `RateLimitedError` (429). It does not define routes or scan the disk itself.
+- `app/gemini_retry.py` retries Gemini calls on rate limits and transient errors with backoff and a per-request budget. It does not build prompts or know about HTTP.
 - `app/context_selector.py` ranks files for a question from names in it and the index/graph, and packs whole files into a char budget. `rank_files_detailed` returns the same order as `rank_files`, plus a reason. It does not read the disk or call Gemini.
 - `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is rebuilt only when any file changed. It does not read the disk or call Gemini.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
@@ -173,7 +174,7 @@ On the 38-file selection fixture, with `MAX_PROMPT_TOKENS` at 2000, that questio
 
 `ranked` in that example is only the first of 38. The response lists up to 50, and `ranked_total` is the full count. Full mode returns `ranked_total` 0 and `ranked` `[]`. `included` says whether that ranked file is in the prompt. `files_included` is every loaded file in full mode, and the packed files in partial mode. `map_files` is 0 when full mode drops the map.
 
-`prompt_tokens` defaults to `ceil(len(prompt) / 3)` and `token_source` is `estimate`. That estimate is conservative. Near the limit it can choose partial mode where `/ask` would still fit in full mode. `?exact=true` counts tokens with Gemini's free `count_tokens` (this needs a key) and then matches `/ask`. 502 and 503 are only possible with `?exact=true`.
+`prompt_tokens` defaults to `ceil(len(prompt) / 3)` and `token_source` is `estimate`. That estimate is conservative. Near the limit it can choose partial mode where `/ask` would still fit in full mode. `?exact=true` counts tokens with Gemini's free `count_tokens` (this needs a key) and then matches `/ask`. 502, 503 and 429 are only possible with `?exact=true`.
 
 ## Errors
 
@@ -184,8 +185,9 @@ On the 38-file selection fixture, with `MAX_PROMPT_TOKENS` at 2000, that questio
 | 413 | Prompt exceeds the token budget, only when even one selected file does not fit | `{"detail":"Project is too large for the prompt budget: <n> tokens, limit <limit>. Point PROJECT_PATH at a smaller directory or raise MAX_PROMPT_TOKENS."}` |
 | 500 | Project files could not be loaded | `{"detail":"Project files could not be loaded."}` |
 | 500 | Unexpected error | `Internal Server Error` |
-| 502 | Gemini rejected the request, or returned empty text, or returned no token count | `{"detail":"AI provider rejected the request."}` |
-| 503 | Gemini is unavailable | `{"detail":"AI provider is unavailable."}` |
+| 429 | Gemini rate limit, still hit after retries | `{"detail":"AI provider rate limit reached. Retry after <n> seconds."}` plus a `Retry-After: <n>` header |
+| 502 | Gemini rejected the request (4xx other than 429), or returned empty text, or returned no token count | `{"detail":"AI provider rejected the request."}` |
+| 503 | Gemini is unavailable (5xx or a network error) after retries | `{"detail":"AI provider is unavailable."}` |
 
 Empty question:
 
@@ -201,7 +203,14 @@ curl -X POST http://127.0.0.1:8000/ask \
 
 A missing `question` or a non-string `question` also returns 422, with a different `detail` list. An unexpected exception returns the plain text `Internal Server Error`.
 
-`POST /context` uses these same status codes and the same `detail` text. 502 and 503 happen only with `?exact=true`.
+`POST /context` uses these same status codes and the same `detail` text. 502, 503 and 429 happen only with `?exact=true`.
+
+## Retries
+
+Gemini calls (`count_tokens` and `generate_content`) retry HTTP 429, 500, 502, 503, and 504, plus connection and timeout errors. Each call gets at most 3 attempts, with exponential backoff and full jitter, unless the server sends a hint (RetryInfo `retryDelay`, otherwise `Retry-After`).
+All Gemini calls in one request share a 20-second sleep budget. If the next delay is longer than the time left, the call fails at once, so a long quota hint returns 429 without sleeping.
+A request can block for up to 20 seconds of sleeps. The endpoints are `async def` running blocking code, so other requests, including `GET /`, wait too.
+Retrying `generate_content` after a 5xx can bill twice if the server actually finished. That is acceptable on the free tier.
 
 ## Tests
 
@@ -260,6 +269,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── code_index.py
 │   ├── config.py
 │   ├── context_selector.py
+│   ├── gemini_retry.py
 │   ├── index_cache.py
 │   ├── logging_config.py
 │   ├── main.py
@@ -289,6 +299,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── test_code_index.py
 │   ├── test_config.py
 │   ├── test_context_selector.py
+│   ├── test_gemini_retry.py
 │   ├── test_index_cache.py
 │   ├── test_logging_startup.py
 │   ├── test_project_loader.py
