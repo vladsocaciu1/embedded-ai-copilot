@@ -122,6 +122,64 @@ def test_ask_empty_question_returns_422(api_client, monkeypatch):
     generate_answer.assert_not_called()
 
 
+def test_ask_whitespace_only_question_returns_422(api_client, monkeypatch):
+
+    # Arrange
+    generate_answer = MagicMock(return_value="hi")
+    monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
+
+    # Act
+    response = api_client.post("/ask", json={"question": "   "})
+
+    # Assert
+    assert response.status_code == 422
+    generate_answer.assert_not_called()
+
+
+def test_ask_whitespace_newline_tab_question_returns_422(api_client, monkeypatch):
+
+    # Arrange
+    generate_answer = MagicMock(return_value="hi")
+    monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
+
+    # Act
+    response = api_client.post("/ask", json={"question": "\n\t "})
+
+    # Assert
+    assert response.status_code == 422
+    generate_answer.assert_not_called()
+
+
+def test_ask_padded_question_returns_200_unchanged(api_client, monkeypatch):
+
+    # Arrange
+    question = "  What does can.c do?  "
+    generate_answer = MagicMock(return_value="hi")
+    monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
+
+    # Act
+    response = api_client.post("/ask", json={"question": question})
+
+    # Assert
+    assert response.status_code == 200
+    generate_answer.assert_called_once_with(question)
+
+
+def test_ask_multiline_question_returns_200(api_client, monkeypatch):
+
+    # Arrange
+    question = "Line one\nLine two"
+    generate_answer = MagicMock(return_value="hi")
+    monkeypatch.setattr("app.main.ai_service.generate_answer", generate_answer)
+
+    # Act
+    response = api_client.post("/ask", json={"question": question})
+
+    # Assert
+    assert response.status_code == 200
+    generate_answer.assert_called_once_with(question)
+
+
 def test_ask_error_bodies_omit_exception_message_and_traceback(api_client, monkeypatch):
 
     # Arrange

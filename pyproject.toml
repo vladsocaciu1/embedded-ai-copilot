@@ -1,7 +1,7 @@
 [project]
 name = "embedded-ai-copilot"
 version = "0.1.0"
-requires-python = ">=3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "fastapi>=0.141.1",
     "google-genai>=2.16.0",

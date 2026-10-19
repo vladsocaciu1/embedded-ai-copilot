@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 class AskRequest(BaseModel):
-    question: str = Field(min_length=1)
+    question: str = Field(min_length=1, pattern=r"\S")
 
 logger.info("FastAPI application initialized.")
 

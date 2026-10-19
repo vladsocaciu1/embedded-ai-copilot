@@ -59,7 +59,7 @@ def generate_answer(question: str) -> str:
 
     prompt = build_assistant_prompt(project_files, question)
 
-    logger.info(f"Sending request to Gemini API.")
+    logger.info("Sending request to Gemini API.")
     start_time = time.perf_counter()
 
     try:
@@ -71,15 +71,15 @@ def generate_answer(question: str) -> str:
         logger.info("Received response from Gemini API.")
     except errors.ClientError as e:
         # 4xx errors
-        logger.exception(f"Client error.")
+        logger.exception("Client error.")
         raise UpstreamRejectedError("AI provider rejected the request.") from e
     except errors.ServerError as e:
         # 5xx errors (retry recommended)
-        logger.exception(f"Server error.")
+        logger.exception("Server error.")
         raise UpstreamUnavailableError("AI provider is unavailable.") from e
     except errors.APIError as e:
         # Any other API error
-        logger.exception(f"API error.")
+        logger.exception("API error.")
         raise UpstreamUnavailableError("AI provider is unavailable.") from e
     else:
         # Checked outside the google-genai handlers so an empty body is not

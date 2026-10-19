@@ -21,7 +21,7 @@ flowchart LR
 ## Modules
 
 - `app/main.py` is the HTTP layer. It serves `GET /` and `POST /ask`, checks the question, and maps service errors to status codes. It does not read the project or call Gemini.
-- `app/ai_service.py` orchestrates one answer: load files, build the prompt, call Gemini, and raise `ProjectLoadError`, `UpstreamRejectedError`, or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
+- `app/ai_service.py` orchestrates one answer: load files, build the prompt, call Gemini, and raise `ProjectLoadError`, `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
 - `app/project_loader.py` reads the filesystem. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, and that `sample_project/` exists. It returns a frozen `Settings` dataclass. It does not call Gemini.
@@ -30,7 +30,7 @@ flowchart LR
 
 ## Setup
 
-Python >=3.14. From the repo root:
+Python 3.14 (>=3.14,<3.15). From the repo root:
 
 ```bash
 uv python install 3.14
@@ -90,7 +90,7 @@ Response body: `{"answer":"<text>"}`.
 | Status | When | Body |
 | --- | --- | --- |
 | 200 | Gemini returned text | `{"answer":"<text>"}` |
-| 422 | Invalid or empty `question` | validation `detail` list, example below |
+| 422 | Invalid, empty, or whitespace-only `question` | validation `detail` list, example below |
 | 500 | Project files could not be loaded | `{"detail":"Project files could not be loaded."}` |
 | 500 | Unexpected error | `Internal Server Error` |
 | 502 | Gemini rejected the request, or returned empty text | `{"detail":"AI provider rejected the request."}` |
