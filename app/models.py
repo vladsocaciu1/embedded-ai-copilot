@@ -78,3 +78,9 @@ class CallRef:
 class ResolvedInclude:
     include: Include
     candidates: tuple[Path, ...]  # () unresolved, 1 resolved, >1 ambiguous
+
+
+@dataclass(frozen=True)
+class ProjectMap:
+    text: str
+    tier: Literal["full", "no_macros", "no_statics", "counts", "omitted"]

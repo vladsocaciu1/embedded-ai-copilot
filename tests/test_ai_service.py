@@ -469,3 +469,138 @@ def test_generate_answer_token_log_omits_prompt_and_api_key(ai_service, caplog, 
     assert any("100" in record.message and limit in record.message for record in caplog.records)
     assert file_marker not in caplog.text
     assert module.settings.gemini_api_key not in caplog.text
+
+
+def test_generate_answer_prompt_contains_project_map(ai_service, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    (tmp_path / "main.c").write_text(
+        "int f(void)\n{\n    return 1;\n}\n",
+        encoding="utf-8",
+    )
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    assert "Project map (full)" in contents
+    assert "f 1-4" in contents
+
+
+def test_generate_answer_precheck_skips_index(ai_service, monkeypatch):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 1))
+    calls = []
+
+    def spy(files):
+        calls.append(files)
+        raise AssertionError("build_index should not run")
+
+    monkeypatch.setattr(module, "build_index", spy)
+
+    # Act / Assert
+    with pytest.raises(module.ProjectTooLargeError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value.estimated is True
+    assert calls == []
+    client.models.count_tokens.assert_not_called()
+
+
+def _token_response(total):
+    return type("TokenResponse", (), {"total_tokens": total})()
+
+
+def test_generate_answer_drops_map_when_over_budget(ai_service, monkeypatch):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 100_000))
+    client.models.count_tokens.side_effect = [
+        _token_response(100_001),
+        _token_response(100),
+    ]
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    assert client.models.count_tokens.call_count == 2
+    client.models.generate_content.assert_called_once()
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    assert "Project map" not in contents
+
+
+def test_generate_answer_map_fallback_still_over_raises(ai_service, monkeypatch):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 100_000))
+    client.models.count_tokens.side_effect = [
+        _token_response(100_001),
+        _token_response(100_001),
+    ]
+
+    # Act / Assert
+    with pytest.raises(module.ProjectTooLargeError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value.token_count == 100_001
+    assert exc_info.value.estimated is False
+    client.models.generate_content.assert_not_called()
+    assert client.models.count_tokens.call_count == 2
+
+
+def test_generate_answer_compacts_map_within_char_cap(ai_service, monkeypatch, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 2_000))
+    lines = [f"#define M_{number} {number}" for number in range(200)]
+    lines.append("void keep_me(void)\n{\n    return;\n}")
+    (tmp_path / "main.c").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    # The source file still contains every #define. The map section is the
+    # part before the first file header, and that section drops the macros.
+    map_section = contents.split("========================", 1)[0]
+    assert "M_150" not in map_section
+    assert "keep_me" in map_section
+
+
+def test_generate_answer_logs_map_tier_without_map_text(ai_service, caplog, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    (tmp_path / "main.c").write_text(
+        "int UNIQUE_MAP_TEXT_zz9 = 1;\n",
+        encoding="utf-8",
+    )
+    client.models.generate_content.return_value.text = "ok"
+    caplog.set_level(logging.INFO)
+
+    # Act
+    module.generate_answer(QUESTION)
+
+    # Assert
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    start = contents.index("Project map (")
+    end = contents.index("\n\nProject context:")
+    map_text = contents[start:end]
+    assert any(
+        record.levelno == logging.INFO and "Project map: tier" in record.message
+        for record in caplog.records
+    )
+    assert all(map_text not in record.message for record in caplog.records)
+    assert "UNIQUE_MAP_TEXT_zz9" not in caplog.text

@@ -5,9 +5,11 @@ from contextlib import contextmanager
 from google import genai
 from google.genai import errors
 
+from app.code_graph import build_graph
+from app.code_index import build_index
 from app.config import load_settings
 from app.project_loader import load_project_files
-from app.prompts import build_assistant_prompt
+from app.prompts import build_assistant_prompt, build_project_map
 
 settings = load_settings()
 
@@ -16,6 +18,8 @@ client = genai.Client(api_key=settings.gemini_api_key)
 logger = logging.getLogger(__name__)
 
 MAX_CHARS_PER_TOKEN = 10
+MAP_BUDGET_SHARE = 0.20
+MAP_CHARS_PER_TOKEN = 3
 
 
 class AIServiceError(Exception):
@@ -66,11 +70,13 @@ def _upstream_errors():
         raise UpstreamUnavailableError("AI provider is unavailable.") from e
 
 
-def _check_prompt_budget(prompt: str) -> None:
+def _precheck(prompt: str) -> None:
     limit = settings.max_prompt_tokens
     if len(prompt) > limit * MAX_CHARS_PER_TOKEN:
         raise ProjectTooLargeError(len(prompt) // MAX_CHARS_PER_TOKEN, limit, estimated=True)
 
+
+def _count_tokens(prompt: str) -> int:
     with _upstream_errors():
         response = client.models.count_tokens(model=settings.gemini_model, contents=prompt)
 
@@ -78,10 +84,7 @@ def _check_prompt_budget(prompt: str) -> None:
     if count is None:
         logger.error("Gemini returned no token count.")
         raise EmptyUpstreamResponseError("AI provider returned no token count.")
-    if count > limit:
-        logger.warning(f"Prompt is {count} tokens (limit {limit}).")
-        raise ProjectTooLargeError(count, limit, estimated=False)
-    logger.info(f"Prompt is {count} tokens (limit {limit}).")
+    return count
 
 
 def generate_answer(question: str) -> str:
@@ -106,9 +109,28 @@ def generate_answer(question: str) -> str:
 
     logger.info(f"Loaded {len(project_files)} project files from {project_path}")
 
-    prompt = build_assistant_prompt(project_files, question)
+    base_prompt = build_assistant_prompt(project_files, question)
+    _precheck(base_prompt)
 
-    _check_prompt_budget(prompt)
+    index = build_index(project_files)
+    graph = build_graph(index)
+    limit = settings.max_prompt_tokens
+    cap = int(limit * MAP_BUDGET_SHARE * MAP_CHARS_PER_TOKEN)
+    project_map = build_project_map(index, graph, max_chars=cap)
+    logger.info(
+        f"Project map: tier {project_map.tier}, {len(project_map.text)} chars (cap {cap})."
+    )
+    prompt = build_assistant_prompt(
+        project_files, question, project_map=project_map.text
+    )
+    count = _count_tokens(prompt)
+    if count > limit:
+        logger.info("Prompt with the map is over budget; retrying without the map.")
+        prompt = base_prompt
+        count = _count_tokens(prompt)
+    if count > limit:
+        raise ProjectTooLargeError(count, limit, estimated=False)
+    logger.info(f"Prompt is {count} tokens (limit {limit}).")
 
     logger.info("Sending request to Gemini API.")
     start_time = time.perf_counter()
