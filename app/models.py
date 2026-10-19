@@ -84,6 +84,33 @@ class ResolvedInclude:
 class ProjectMap:
     text: str
     tier: Literal["full", "no_macros", "no_statics", "counts", "omitted", "focused"]
+    file_count: int
+
+
+@dataclass(frozen=True)
+class RankedFile:
+    path: Path
+    reason: Literal[
+        "named", "defines", "pair", "call", "include", "focus", "lexical", "entry"
+    ]
+    focus: int
+    tier: int  # 0-4 structural, 9 none
+    hits: int
+    lexical: int
+
+
+@dataclass(frozen=True)
+class PreparedPrompt:
+    prompt: str
+    mode: Literal["full", "partial"]
+    limit: int
+    token_count: int
+    token_source: Literal["count", "estimate"]
+    files_total: int
+    included: tuple[Path, ...]  # full mode: every loaded file, in load order
+    map_tier: str | None
+    map_files: int  # 0 when full mode dropped the map
+    ranked: tuple[RankedFile, ...]  # () in full mode
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,6 @@
 import logging
+import math
+from pathlib import Path
 
 import pytest
 from google.genai import errors
@@ -851,6 +853,133 @@ def test_warm_up_indexes_loaded_files_once(ai_service, monkeypatch):
     assert [(item.path, item.content) for item in calls[0][1]] == [
         (item.path, item.content) for item in loaded
     ]
+
+
+def _write_eval_fixture(tmp_path):
+    from tests.test_selection_eval import eval_files
+
+    default = tmp_path / "main.c"
+    if default.exists():
+        default.unlink()
+    for project_file in eval_files():
+        destination = tmp_path / project_file.path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(project_file.content, encoding="utf-8")
+
+
+_E1_QUESTION = "In STM32F4-Discovery GPIO_EXTI, what does EXTI0_IRQHandler call?"
+_E1_FILE = Path(
+    "Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/stm32f4xx_it.c"
+)
+
+
+def test_dry_run_eval_fixture_is_partial_estimate(ai_service, monkeypatch, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 2_000))
+    _write_eval_fixture(tmp_path)
+
+    # Act
+    prepared = module.dry_run(_E1_QUESTION)
+
+    # Assert
+    assert prepared.mode == "partial"
+    assert prepared.token_source == "estimate"
+    assert prepared.included[0] == _E1_FILE
+    assert prepared.ranked[0].reason == "defines"
+    assert prepared.token_count == math.ceil(len(prepared.prompt) / module.MAP_CHARS_PER_TOKEN)
+    assert prepared.token_count <= 2_000
+    client.models.count_tokens.assert_not_called()
+    client.models.generate_content.assert_not_called()
+
+
+def test_dry_run_small_project_is_full_without_gemini(ai_service):
+
+    # Arrange
+    module, client = ai_service
+
+    # Act
+    prepared = module.dry_run(QUESTION)
+
+    # Assert
+    assert prepared.mode == "full"
+    assert prepared.ranked == ()
+    assert prepared.included == (Path("main.c"),)
+    assert prepared.map_files == 1
+    client.models.count_tokens.assert_not_called()
+    client.models.generate_content.assert_not_called()
+
+
+def test_dry_run_exact_uses_counted_tokens(ai_service):
+
+    # Arrange
+    module, client = ai_service
+    client.models.count_tokens.return_value.total_tokens = 100
+
+    # Act
+    prepared = module.dry_run(QUESTION, exact=True)
+
+    # Assert
+    client.models.count_tokens.assert_called()
+    assert prepared.token_source == "count"
+    assert prepared.token_count == 100
+    client.models.generate_content.assert_not_called()
+
+
+def test_dry_run_exact_prompt_matches_generate_answer(ai_service, monkeypatch, tmp_path):
+
+    # Arrange
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 2_000))
+    _write_eval_fixture(tmp_path)
+    client.models.count_tokens.return_value.total_tokens = 100
+    client.models.generate_content.return_value.text = "ok"
+
+    # Act
+    module.generate_answer(_E1_QUESTION)
+    sent = client.models.generate_content.call_args.kwargs["contents"]
+    prepared = module.dry_run(_E1_QUESTION, exact=True)
+
+    # Assert
+    assert sent == prepared.prompt
+
+
+def test_dry_run_limit_one_raises_estimated_project_too_large(ai_service, monkeypatch):
+
+    # Arrange
+    module, _client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 1))
+
+    # Act / Assert
+    with pytest.raises(module.ProjectTooLargeError) as dry_run_error:
+        module.dry_run(QUESTION)
+    with pytest.raises(module.ProjectTooLargeError) as answer_error:
+        module.generate_answer(QUESTION)
+
+    assert dry_run_error.value.estimated is True
+    assert answer_error.value.estimated is True
+    assert dry_run_error.value.token_count == answer_error.value.token_count
+    assert dry_run_error.value.limit == answer_error.value.limit == 1
+
+
+def test_dry_run_logs_partial_mode_without_the_question(ai_service, monkeypatch, tmp_path, caplog):
+
+    # Arrange
+    module, _client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 2_000))
+    _write_eval_fixture(tmp_path)
+    caplog.set_level(logging.INFO)
+
+    # Act
+    module.dry_run(_E1_QUESTION)
+
+    # Assert
+    assert any(
+        record.levelno == logging.INFO and "Dry run: mode partial" in record.message
+        for record in caplog.records
+    )
+    assert all(_E1_QUESTION not in record.message for record in caplog.records)
 
 
 def test_warm_up_invalid_path_logs_warning(ai_service, monkeypatch, caplog, tmp_path):

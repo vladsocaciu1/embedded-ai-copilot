@@ -339,6 +339,110 @@ def test_ask_returns_context(api_client, monkeypatch):
     }
 
 
+_CONTEXT_KEYS = {
+    "mode",
+    "limit",
+    "prompt_tokens",
+    "token_source",
+    "prompt_chars",
+    "files_total",
+    "files_included",
+    "map_tier",
+    "map_files",
+    "ranked_total",
+    "ranked",
+}
+
+
+def test_context_returns_ranked_preview_without_generate(api_client, ai_service, monkeypatch, tmp_path):
+
+    # Arrange
+    from tests.test_ai_service import _settings_with_limit, _write_partial_project
+
+    module, client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 10_000))
+    _write_partial_project(tmp_path)
+    default = tmp_path / "main.c"
+    if default.exists():
+        default.unlink()
+
+    # Act
+    response = api_client.post("/context", json={"question": "What does Can_Init do?"})
+
+    # Assert
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == _CONTEXT_KEYS
+    assert body["mode"] == "partial"
+    assert body["token_source"] == "estimate"
+    assert body["ranked_total"] >= len(body["ranked"])
+    assert body["ranked"]
+    assert len(body["ranked"]) <= 50
+    for item in body["ranked"]:
+        assert set(item) == {"path", "reason", "included", "focus", "tier", "hits", "lexical"}
+        assert isinstance(item["included"], bool)
+    client.models.generate_content.assert_not_called()
+    client.models.count_tokens.assert_not_called()
+
+
+def test_context_exact_client_error_matches_ask_502(api_client, ai_service):
+
+    # Arrange
+    from google.genai import errors
+
+    _module, client = ai_service
+    client.models.count_tokens.side_effect = errors.ClientError(
+        400,
+        {"message": "bad request", "status": "INVALID_ARGUMENT"},
+    )
+    question = {"question": "Where is the answer initialized?"}
+
+    # Act
+    context_response = api_client.post("/context", params={"exact": True}, json=question)
+    ask_response = api_client.post("/ask", json=question)
+
+    # Assert
+    assert context_response.status_code == 502
+    assert ask_response.status_code == 502
+    assert context_response.json()["detail"] == ask_response.json()["detail"]
+    assert context_response.json()["detail"] == "AI provider rejected the request."
+
+
+def test_context_estimated_too_large_matches_ask_413(api_client, ai_service, monkeypatch):
+
+    # Arrange
+    from tests.test_ai_service import _settings_with_limit
+
+    module, _client = ai_service
+    monkeypatch.setattr(module, "settings", _settings_with_limit(module, 1))
+    question = {"question": "Where is the answer initialized?"}
+
+    # Act
+    context_response = api_client.post("/context", json=question)
+    ask_response = api_client.post("/ask", json=question)
+
+    # Assert
+    assert context_response.status_code == 413
+    assert ask_response.status_code == 413
+    detail = context_response.json()["detail"]
+    assert detail == ask_response.json()["detail"]
+    assert detail.startswith("Project is too large for the prompt budget: at least ")
+    assert "tokens (estimated), limit 1." in detail
+
+
+def test_context_empty_question_returns_422(api_client, ai_service):
+
+    # Arrange
+    _module, client = ai_service
+
+    # Act
+    response = api_client.post("/context", json={"question": ""})
+
+    # Assert
+    assert response.status_code == 422
+    client.models.generate_content.assert_not_called()
+
+
 def test_lifespan_warms_index_in_a_thread(ai_service, monkeypatch):
 
     # Arrange

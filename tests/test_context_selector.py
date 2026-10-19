@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.code_graph import build_graph
 from app.code_index import build_index
-from app.context_selector import pack_files, rank_files
+from app.context_selector import pack_files, rank_files, rank_files_detailed
 from app.models import ProjectFile
 
 
@@ -240,3 +240,100 @@ def test_pack_zero_budget_returns_empty():
     files = {path: ProjectFile(path, "int x;\n")}
 
     assert pack_files((path,), files, 0) == ()
+
+
+def _detailed(question: str, files: list[ProjectFile]):
+    index = build_index(files)
+    return rank_files_detailed(question, index, build_graph(index))
+
+
+def test_rank_files_detailed_paths_match_rank_files():
+    files = [
+        ProjectFile(Path("src/can.c"), "void Can_Init(void)\n{\n    return;\n}\n"),
+        ProjectFile(Path("inc/can.h"), "void Can_Init(void);\n"),
+        ProjectFile(Path("src/app.c"), "void App_Run(void)\n{\n    Can_Init();\n}\n"),
+        ProjectFile(Path("src/other.c"), "void app_helper(void)\n{\n    return;\n}\n"),
+    ]
+    question = "What does Can_Init do?"
+    index = build_index(files)
+    graph = build_graph(index)
+
+    detailed = rank_files_detailed(question, index, graph)
+
+    assert tuple(item.path for item in detailed) == rank_files(question, index, graph)
+
+
+def test_rank_files_detailed_reasons():
+    named = Path("src/can.c")
+    named_ranked = _detailed(
+        "Explain src/can.c",
+        [
+            ProjectFile(named, "int from_src;\n"),
+            ProjectFile(Path("src/other.c"), "int from_other;\n"),
+        ],
+    )
+    named_hit = next(item for item in named_ranked if item.path == named)
+    assert named_hit.reason == "named"
+
+    source = Path("src/can.c")
+    header = Path("inc/can.h")
+    defined = _detailed(
+        "What does Can_Init do?",
+        [
+            ProjectFile(header, "void Can_Init(void);\n"),
+            ProjectFile(
+                source,
+                '#include "can.h"\nvoid Can_Init(void)\n{\n    return;\n}\n',
+            ),
+        ],
+    )
+    definer = next(item for item in defined if item.path == source)
+    pair = next(item for item in defined if item.path == header)
+    assert definer.reason == "defines"
+    assert definer.tier == 1
+    assert definer.hits >= 1
+    assert pair.reason == "pair"
+
+    lexical = Path("src/clock.c")
+    lexical_ranked = _detailed(
+        "How is the clock configured?",
+        [
+            ProjectFile(Path("src/other.c"), "void idle(void)\n{\n    return;\n}\n"),
+            ProjectFile(
+                lexical,
+                "void SystemClock_Config(void)\n{\n    return;\n}\n",
+            ),
+        ],
+    )
+    lexical_hit = next(item for item in lexical_ranked if item.path == lexical)
+    assert lexical_hit.reason == "lexical"
+    assert lexical_hit.tier == 9
+
+    focus = Path("ab1/foo.c")
+    focus_ranked = _detailed(
+        "How does ab1 work?",
+        [ProjectFile(focus, "int x;\n")],
+    )
+    assert focus_ranked[0].path == focus
+    assert focus_ranked[0].reason == "focus"
+
+
+def test_rank_files_detailed_entry_reason_when_no_candidates():
+    files = [
+        ProjectFile(Path("other.c"), "int value;\n"),
+        ProjectFile(Path("startup_x.s"), "nop\n"),
+        ProjectFile(Path("src/main.c"), "int main(void)\n{\n    return 0;\n}\n"),
+        ProjectFile(Path("link.ld"), "SECTIONS\n{\n}\n"),
+    ]
+
+    detailed = _detailed("Hello?", files)
+
+    assert detailed
+    assert all(
+        item.reason == "entry"
+        and item.focus == 0
+        and item.tier == 9
+        and item.hits == 0
+        and item.lexical == 0
+        for item in detailed
+    )
