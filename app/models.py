@@ -63,6 +63,17 @@ class ProjectIndex:
 
 
 @dataclass(frozen=True)
+class Chunk:
+    path: Path
+    kind: Literal["file", "function"]
+    name: str
+    start_line: int
+    end_line: int
+    text: str
+    key: str
+
+
+@dataclass(frozen=True)
 class SymbolRef:
     path: Path
     symbol: Symbol
