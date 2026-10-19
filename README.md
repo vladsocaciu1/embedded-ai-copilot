@@ -34,8 +34,9 @@ flowchart LR
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. Full mode adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. Partial mode adds a focused map and a partial-context notice, then the selected files in rank order. It does not load the tree or call Gemini.
 - `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
-- `app/models.py` holds the `ProjectFile` dataclass, the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`, `ProjectMap`), `RankedFile`, `PreparedPrompt`, and `Answer` / `AnswerContext`. The HTTP body is `AskRequest` in `main.py`.
+- `app/models.py` holds the `ProjectFile` dataclass, the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`, `ProjectMap`), `Chunk`, `RankedFile`, `PreparedPrompt`, and `Answer` / `AnswerContext`. The HTTP body is `AskRequest` in `main.py`.
 - `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is used by `/ask` for the project map. It does not read the disk or call Gemini.
+- `app/chunker.py` builds retrieval chunks (file cards and function chunks) from the tree-sitter index; doesn't embed, store or rank.
 - `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. `update_graph` patches a graph for content edits and path changes; the result equals a full rebuild. Used by /ask for the project map. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
@@ -243,6 +244,14 @@ uv run python scripts/eval_selection.py <cube_root> scripts/cube_semantic_dev.js
 
 `scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph once, and ranks every given case file. With no case file it uses `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0.
 
+```bash
+uv run python scripts/chunk_stats.py <project_dir>
+```
+
+`scripts/chunk_stats.py` loads a project with the default directory excludes, builds the index, and prints chunk counts, size and cost estimates. It times chunking only. It does not embed.
+
+On STM32CubeF4 (Projects only): 16,595 files, 11,911 parsed, 64,994 chunks, 18,451 unique, 14.07M chars (~3.5M tokens), chunking 1.1 s.
+
 ## Graph update check
 
 `uv run python scripts/graph_update_check.py <project_dir> [--file REL_PATH] [--no-paths]`
@@ -279,6 +288,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 ├── app/
 │   ├── __init__.py
 │   ├── ai_service.py
+│   ├── chunker.py
 │   ├── code_graph.py
 │   ├── code_index.py
 │   ├── config.py
@@ -295,6 +305,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 ├── scripts/
 │   ├── cube_eval_cases.json
 │   ├── cube_semantic_dev.json
+│   ├── chunk_stats.py
 │   ├── cube_semantic_heldout.json
 │   ├── eval_selection.py
 │   └── graph_update_check.py
@@ -312,6 +323,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── conftest.py
 │   ├── test_ai_service.py
 │   ├── test_api.py
+│   ├── test_chunker.py
 │   ├── test_code_graph.py
 │   ├── test_code_index.py
 │   ├── test_config.py
