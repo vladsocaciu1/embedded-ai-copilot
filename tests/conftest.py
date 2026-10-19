@@ -46,4 +46,22 @@ def ai_service(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(module, "index_cache", IndexCache())
+
+    from app import gemini_retry
+
+    monkeypatch.setattr(gemini_retry, "sleep", lambda _delay: None)
+    monkeypatch.setattr(gemini_retry, "rand", lambda: 0.5)
     return module, client
+
+
+@pytest.fixture
+def sleeps(ai_service, monkeypatch):
+    from app import gemini_retry
+
+    recorded: list[float] = []
+
+    def record(delay: float) -> None:
+        recorded.append(delay)
+
+    monkeypatch.setattr(gemini_retry, "sleep", record)
+    return recorded

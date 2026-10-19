@@ -1014,3 +1014,183 @@ def test_warm_up_invalid_path_logs_warning(ai_service, monkeypatch, caplog, tmp_
         and record.message == f"Index warm-up skipped: invalid project path {missing}"
         for record in caplog.records
     )
+
+
+def _rate_limit(delay: str | None):
+    body: dict = {"message": "rate limit", "status": "RESOURCE_EXHAUSTED"}
+    if delay is not None:
+        body["details"] = [
+            {
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": delay,
+            }
+        ]
+    return errors.ClientError(429, body)
+
+
+def _token_count(count: int = 100):
+    from unittest.mock import MagicMock
+
+    response = MagicMock()
+    response.total_tokens = count
+    return response
+
+
+def _model_text(text: str = "The answer is 42."):
+    from unittest.mock import MagicMock
+
+    response = MagicMock()
+    response.text = text
+    return response
+
+
+def test_s1_count_tokens_retries_then_answers(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.count_tokens.side_effect = [
+        _rate_limit(None),
+        _rate_limit(None),
+        _token_count(),
+    ]
+    client.models.generate_content.return_value = _model_text()
+
+    # Act
+    answer = module.generate_answer(QUESTION)
+
+    # Assert
+    assert answer.text == "The answer is 42."
+    assert client.models.count_tokens.call_count == 3
+    assert len(sleeps) == 2
+    client.models.generate_content.assert_called_once()
+
+
+def test_s2_generate_content_retries_then_answers(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.side_effect = [
+        _rate_limit(None),
+        _rate_limit(None),
+        _model_text(),
+    ]
+
+    # Act
+    answer = module.generate_answer(QUESTION)
+
+    # Assert
+    assert answer.text == "The answer is 42."
+    assert client.models.generate_content.call_count == 3
+    assert len(sleeps) == 2
+
+
+def test_s3_generate_content_429_exhausted_is_rate_limited(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.side_effect = _rate_limit("7s")
+
+    # Act / Assert
+    with pytest.raises(module.RateLimitedError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value.retry_after == 7
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
+    assert sleeps == [7.0, 7.0]
+    assert client.models.generate_content.call_count == 3
+
+
+def test_s4_generate_content_503_exhausted_is_unavailable(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.generate_content.side_effect = errors.ServerError(
+        503,
+        {"message": "unavailable", "status": "UNAVAILABLE"},
+    )
+
+    # Act / Assert
+    with pytest.raises(module.UpstreamUnavailableError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert isinstance(exc_info.value.__cause__, errors.ServerError)
+    assert client.models.generate_content.call_count == 3
+
+
+def test_s5_transport_errors_are_unavailable(ai_service, sleeps):
+    # Arrange
+    import httpx
+
+    module, client = ai_service
+    refused = httpx.ConnectError("connection refused")
+    client.models.count_tokens.side_effect = refused
+
+    # Act / Assert
+    with pytest.raises(module.UpstreamUnavailableError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value.__cause__ is refused
+    assert client.models.count_tokens.call_count == 3
+    client.models.generate_content.assert_not_called()
+
+    # Arrange
+    client.models.count_tokens.side_effect = None
+    client.models.count_tokens.return_value.total_tokens = 100
+    timed_out = httpx.ReadTimeout("read timed out")
+    client.models.generate_content.side_effect = timed_out
+
+    # Act / Assert
+    with pytest.raises(module.UpstreamUnavailableError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value.__cause__ is timed_out
+    assert client.models.generate_content.call_count == 3
+
+
+def test_s6_shared_budget_stops_before_second_long_hint(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.count_tokens.side_effect = [_rate_limit("12s"), _token_count(100)]
+    client.models.generate_content.side_effect = _rate_limit("12s")
+
+    # Act / Assert
+    with pytest.raises(module.RateLimitedError) as exc_info:
+        module.generate_answer(QUESTION)
+
+    assert exc_info.value.retry_after == 12
+    assert sleeps == [12.0]
+    client.models.generate_content.assert_called_once()
+
+
+def test_s7_budget_is_per_request(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.count_tokens.side_effect = [_rate_limit("12s"), _token_count(100)]
+    client.models.generate_content.side_effect = _rate_limit("12s")
+    with pytest.raises(module.RateLimitedError):
+        module.generate_answer(QUESTION)
+
+    client.models.count_tokens.side_effect = None
+    client.models.count_tokens.return_value.total_tokens = 100
+    client.models.generate_content.side_effect = [_rate_limit("12s"), _model_text()]
+
+    # Act
+    answer = module.generate_answer(QUESTION)
+
+    # Assert
+    assert answer.text == "The answer is 42."
+    assert sleeps == [12.0, 12.0]
+
+
+def test_s8_dry_run_exact_retries_and_estimate_does_not(ai_service, sleeps):
+    # Arrange
+    module, client = ai_service
+    client.models.count_tokens.side_effect = _rate_limit("7s")
+
+    # Act / Assert
+    with pytest.raises(module.RateLimitedError):
+        module.dry_run(QUESTION, exact=True)
+
+    assert client.models.count_tokens.call_count == 3
+    slept = len(sleeps)
+    prepared = module.dry_run(QUESTION)
+    assert prepared.token_source == "estimate"
+    assert client.models.count_tokens.call_count == 3
+    client.models.generate_content.assert_not_called()
+    assert len(sleeps) == slept

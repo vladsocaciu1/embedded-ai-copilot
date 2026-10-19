@@ -52,6 +52,19 @@ def _service_errors():
                 "Point PROJECT_PATH at a smaller directory or raise MAX_PROMPT_TOKENS."
             ),
         )
+    except ai_service.RateLimitedError as error:
+        logger.warning(
+            "AI provider rate limit reached. "
+            f"Retry after {error.retry_after} seconds."
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "AI provider rate limit reached. "
+                f"Retry after {error.retry_after} seconds."
+            ),
+            headers={"Retry-After": str(error.retry_after)},
+        )
     except ai_service.UpstreamRejectedError:
         logger.exception("AI provider rejected the request.")
         raise HTTPException(status_code=502, detail="AI provider rejected the request.")
