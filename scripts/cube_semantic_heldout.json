@@ -1,0 +1,10 @@
+[
+ {"question": "On STM32F429I-Discovery, how are two tasks created and scheduled by the real-time kernel?", "expected": ["Projects/STM32F429I-Discovery/Applications/FreeRTOS/FreeRTOS_ThreadCreation/Src/main.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how is the external dynamic memory initialized and tested?", "expected": ["Projects/STM32F429I-Discovery/Examples/FMC/FMC_SDRAM/Src/main.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how are two images blended in hardware before display?", "expected": ["Projects/STM32F429I-Discovery/Examples/DMA2D/DMA2D_MemToMemWithBlending/Src/main.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how are two layers shown on the LCD at the same time?", "expected": ["Projects/STM32F429I-Discovery/Examples/LTDC/LTDC_Display_2Layers/Src/main.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how is a compressed picture decoded?", "expected": ["Projects/STM32F429I-Discovery/Applications/LibJPEG/LibJPEG_Decoding/Src/decode.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how is a file system kept on a disk that lives in external RAM?", "expected": ["Projects/STM32F429I-Discovery/Applications/FatFs/FatFs_RAMDisk/Src/sdram_diskio.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how is the HAL tick taken from a general-purpose timer instead of SysTick?", "expected": ["Projects/STM32F429I-Discovery/Examples/HAL/HAL_TimeBase_TIM/Src/stm32f4xx_hal_timebase_tim.c"], "k": 5},
+ {"question": "On STM32F429I-Discovery, how is a full-duplex transfer on the serial peripheral interface done with direct memory access?", "expected": ["Projects/STM32F429I-Discovery/Examples/SPI/SPI_FullDuplex_ComDMA/Src/main.c"], "k": 5}
+]

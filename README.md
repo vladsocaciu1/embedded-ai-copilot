@@ -222,19 +222,26 @@ The tests run offline. Gemini is mocked.
 
 ## Selection eval
 
-`tests/test_selection_eval.py` ranks 10 questions against a 38-file fixture: two boards, three examples, and the BSP. Each case checks that every expected file is inside its own pinned top-k. There is no aggregate score.
+`tests/test_selection_eval.py` ranks 14 questions against a 38-file fixture: two boards, three examples, and the BSP. Each case checks that every expected file is inside its own pinned top-k.
+
+A case's rank is the worst (largest) rank among its expected paths, or absent when any expected path is missing. The case passes when that rank is at most k. hit@5 counts cases whose rank is at most 5. MRR is the mean of 1/rank, and a missing rank counts as 0. Each case file ends with `summary: pass P/N, hit@5 H/N, MRR 0.xx`.
 
 Two cases are pinned at k=4, where today's ranking misses a tighter cutoff:
 
 - E7, "Which function handles the ADC interrupt in ADC_RegularConversion on STM32F429I-Discovery?": there is no synonym from "interrupt" to `IRQ`, so the handler is rank 4.
 - E10, "Who calls BSP_LED_Toggle?": the definition ranks before the callers, so the call sites are ranks 3 and 4.
 
+`scripts/cube_semantic_dev.json` holds 12 plain-language questions for measuring semantic retrieval. `scripts/cube_semantic_heldout.json` holds 8 plain-language questions. The held-out file is run only at the spec 25 gate and later Phase 5 milestones. Nothing (chunking, fusion, glossary) is tuned on it. If a held-out case is wrong (bad expected path), it is fixed and the fix logged, not dropped.
+
+Baseline: lexical ranking, b0c3c6a: structural 8/8, MRR 0.81; semantic dev hit@5 7/12, MRR 0.45.
+
 ```bash
 uv run pytest tests/test_selection_eval.py
-uv run python scripts/eval_selection.py <cube_root>
+uv run python scripts/eval_selection.py <cube_root> scripts/cube_eval_cases.json scripts/cube_semantic_dev.json
+uv run python scripts/eval_selection.py <cube_root> scripts/cube_semantic_dev.json --json /tmp/eval.json
 ```
 
-`scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph, and ranks the cases in `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0.
+`scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph once, and ranks every given case file. With no case file it uses `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0.
 
 ## Graph update check
 
@@ -287,6 +294,8 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │       └── assistant.md
 ├── scripts/
 │   ├── cube_eval_cases.json
+│   ├── cube_semantic_dev.json
+│   ├── cube_semantic_heldout.json
 │   ├── eval_selection.py
 │   └── graph_update_check.py
 ├── sample_project/
