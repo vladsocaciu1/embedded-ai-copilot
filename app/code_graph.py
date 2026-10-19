@@ -53,8 +53,6 @@ class CodeGraph:
         calls_by_caller: dict[str, tuple[CallRef, ...]],
         includes: dict[Path, tuple[ResolvedInclude, ...]],
         included_by: dict[Path, tuple[Path, ...]],
-        by_basename: dict[str, tuple[Path, ...]],
-        by_stem: dict[str, tuple[Path, ...]],
         pairs: dict[Path, tuple[Path, ...]],
         paths: frozenset[Path],
     ) -> None:
@@ -63,8 +61,6 @@ class CodeGraph:
         self._calls_by_caller = calls_by_caller
         self._includes = includes
         self._included_by = included_by
-        self._by_basename = by_basename
-        self._by_stem = by_stem
         self._pairs = pairs
         self._paths = paths
 
@@ -103,7 +99,6 @@ class CodeGraph:
 
 def _assemble(index: ProjectIndex) -> CodeGraph:
     by_basename: dict[str, list[Path]] = {}
-    by_stem: dict[str, list[Path]] = {}
     by_parts: dict[tuple[str, ...], list[Path]] = {}
     by_stem_group: dict[tuple[str, str], list[Path]] = {}
     lower_parts: dict[Path, tuple[str, ...]] = {}
@@ -113,14 +108,12 @@ def _assemble(index: ProjectIndex) -> CodeGraph:
         parts = tuple(part.lower() for part in path.parts)
         group = _pair_group(path)
         by_basename.setdefault(path.name.lower(), []).append(path)
-        by_stem.setdefault(path.stem.lower(), []).append(path)
         by_parts.setdefault(parts, []).append(path)
         lower_parts[path] = parts
         parent_parts[path] = parts[:-1]
         if group is not None:
             by_stem_group.setdefault((path.stem.lower(), group), []).append(path)
     basename_table = _freeze_paths(by_basename)
-    stem_table = _freeze_paths(by_stem)
     part_table = _freeze_paths(by_parts)
     stem_group_table = _freeze_paths(by_stem_group)
     includes, included_by = _include_tables(
@@ -132,8 +125,6 @@ def _assemble(index: ProjectIndex) -> CodeGraph:
         calls_by_caller=_call_table(index, by_callee=False),
         includes=includes,
         included_by=included_by,
-        by_basename=basename_table,
-        by_stem=stem_table,
         pairs=_pair_table(index, stem_group_table, parent_parts),
         paths=frozenset(file.path for file in index.files),
     )
