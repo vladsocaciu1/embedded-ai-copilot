@@ -5,11 +5,12 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 import app.config as config
-from app.config import DEFAULT_PROJECT_PATH, load_settings
+from app.config import DEFAULT_EXCLUDE_DIRS, DEFAULT_PROJECT_PATH, load_settings
 
 _DOTENV_TESTS = {
     "test_load_settings_honors_dotenv_file",
     "test_load_settings_honors_project_path_in_dotenv_file",
+    "test_load_settings_honors_exclude_dirs_in_dotenv_file",
 }
 
 
@@ -22,6 +23,7 @@ def stub_dotenv_and_clear_env(monkeypatch, request):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("PROJECT_PATH", raising=False)
+    monkeypatch.delenv("EXCLUDE_DIRS", raising=False)
 
 def test_load_settings_returns_settings_for_valid_dir_and_env(tmp_path, monkeypatch):
 
@@ -303,5 +305,101 @@ def test_load_settings_honors_project_path_in_dotenv_file(tmp_path, monkeypatch)
 
     # Assert
     assert settings.project_path == project_dir.resolve()
+    assert settings.gemini_api_key == "from-dotenv-key"
+    assert settings.gemini_model == "from-dotenv-model"
+
+def test_load_settings_unset_exclude_dirs_uses_defaults(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.delenv("EXCLUDE_DIRS", raising=False)
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.exclude_dirs == DEFAULT_EXCLUDE_DIRS
+
+def test_load_settings_whitespace_exclude_dirs_uses_defaults(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("EXCLUDE_DIRS", "   ")
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.exclude_dirs == DEFAULT_EXCLUDE_DIRS
+
+def test_load_settings_parses_exclude_dirs(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("EXCLUDE_DIRS", " vendor , Generated ,, ")
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.exclude_dirs == ("vendor", "Generated")
+
+def test_load_settings_comma_exclude_dirs_includes_all(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("EXCLUDE_DIRS", ",")
+
+    # Act
+    settings = load_settings(tmp_path)
+
+    # Assert
+    assert settings.exclude_dirs == ()
+
+def test_load_settings_exclude_dirs_path_separator_raises_value_error(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    monkeypatch.setenv("EXCLUDE_DIRS", "src/vendor")
+
+    # Act / Assert
+    with pytest.raises(ValueError):
+        load_settings(tmp_path)
+
+    monkeypatch.setenv("EXCLUDE_DIRS", "src\\vendor")
+    with pytest.raises(ValueError):
+        load_settings(tmp_path)
+
+def test_load_settings_honors_exclude_dirs_in_dotenv_file(tmp_path, monkeypatch):
+
+    # Arrange
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (tmp_path / ".env").write_text(
+        "GEMINI_API_KEY=from-dotenv-key\n"
+        "GEMINI_MODEL=from-dotenv-model\n"
+        "EXCLUDE_DIRS=vendor, Generated\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    # setenv then delenv so monkeypatch records the names. delenv on an
+    # absent var records nothing, and load_dotenv writes them into os.environ.
+    monkeypatch.setenv("GEMINI_API_KEY", "placeholder")
+    monkeypatch.setenv("GEMINI_MODEL", "placeholder")
+    monkeypatch.setenv("EXCLUDE_DIRS", "placeholder")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("EXCLUDE_DIRS", raising=False)
+
+    # Act
+    settings = load_settings(project_dir)
+
+    # Assert
+    assert settings.exclude_dirs == ("vendor", "Generated")
     assert settings.gemini_api_key == "from-dotenv-key"
     assert settings.gemini_model == "from-dotenv-model"

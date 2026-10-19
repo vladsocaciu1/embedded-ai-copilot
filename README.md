@@ -22,9 +22,9 @@ flowchart LR
 
 - `app/main.py` is the HTTP layer. It serves `GET /` and `POST /ask`, checks the question, and maps service errors to status codes. It does not read the project or call Gemini.
 - `app/ai_service.py` orchestrates one answer: load files, build the prompt, call Gemini, and raise `ProjectLoadError`, `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), or `UpstreamUnavailableError`. It does not define routes or scan the disk itself.
-- `app/project_loader.py` reads the filesystem. It does not build prompts or call Gemini.
+- `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. It does not load the tree or call Gemini.
-- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
+- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
 - `app/models.py` holds the `ProjectFile` dataclass. The HTTP body is `AskRequest` in `main.py`.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
@@ -47,11 +47,16 @@ GEMINI_API_KEY=your-key
 GEMINI_MODEL=your-model
 # Optional: directory to analyze (default: sample_project/)
 # PROJECT_PATH=/absolute/path/to/your/embedded/repo
+# Optional: comma-separated directory-name patterns to skip; replaces the vendor defaults.
+# Use "," to include all vendor code. Hidden and build dirs are always skipped.
+# EXCLUDE_DIRS=CMSIS,*_HAL_Driver,Middlewares,third_party,vendor,external,GenData
 ```
 
 Startup fails if either value is missing or empty (`RuntimeError: GEMINI_API_KEY is not set.` or `RuntimeError: GEMINI_MODEL is not set.`).
 
-The running app reads one project directory. `PROJECT_PATH` unset, empty, or whitespace-only uses `sample_project/`. A relative path resolves against the repo root, not the process cwd. A leading `~` is expanded. An absolute path is recommended. The path must be an existing directory or startup fails. The path is read once at startup; restart the app after changing it. One project is used per process. It loads only `.c`, `.h`, `.cpp`, and `.hpp` files, including files in subdirectories. A non-UTF-8 file is skipped with a warning (`Skipping non-UTF-8 file: ...`).
+The running app reads one project directory. `PROJECT_PATH` unset, empty, or whitespace-only uses `sample_project/`. A relative path resolves against the repo root, not the process cwd. A leading `~` is expanded. An absolute path is recommended. The path must be an existing directory or startup fails. The path is read once at startup; restart the app after changing it. One project is used per process. It loads `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`, `.inl`, `.s`, `.asm`, and `.ld` files, including files in subdirectories. Suffixes are matched case-insensitively, so `.S` and `.s` assembly and `.ld` linker scripts load.
+
+What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB are skipped with a warning. A non-UTF-8 file is skipped with a warning (`Skipping non-UTF-8 file: ...`).
 
 ## Run
 
