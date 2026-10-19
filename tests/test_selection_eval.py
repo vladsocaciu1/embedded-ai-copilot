@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,7 @@ from app.code_graph import build_graph
 from app.code_index import build_index
 from app.context_selector import rank_files
 from app.models import ProjectFile
+from scripts.eval_selection import CaseResult, case_rank, main, summarize
 
 
 BOARDS = ("STM32F4-Discovery", "STM32F429I-Discovery")
@@ -159,6 +162,31 @@ _CASES = [
         4,
         id="E10",
     ),
+    # weak spot: plain language, no EXTI/KEY name
+    pytest.param(
+        "What happens when the user button is pressed on STM32F4-Discovery?",
+        ["Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/main.c"],
+        10,
+        id="P1",
+    ),
+    pytest.param(
+        "How does STM32F429I-Discovery read an analog input?",
+        ["Projects/STM32F429I-Discovery/Examples/ADC/ADC_RegularConversion/Src/main.c"],
+        3,
+        id="P2",
+    ),
+    pytest.param(
+        "How are bytes sent between two boards over the serial port on STM32F4-Discovery?",
+        ["Projects/STM32F4-Discovery/Examples/UART/UART_TwoBoards_ComIT/Src/main.c"],
+        3,
+        id="P3",
+    ),
+    pytest.param(
+        "Which file switches an LED on and off?",
+        ["Drivers/BSP/STM32F4-Discovery/stm32f4_discovery.c"],
+        1,
+        id="P4",
+    ),
 ]
 
 
@@ -175,3 +203,104 @@ def test_selection_eval(question, expected, k):
             rank = "absent"
         lines.append(f"{path} rank {rank}")
     pytest.fail("\n".join(lines))
+
+
+def _case_result(rank: int | None, k: int) -> CaseResult:
+    return CaseResult(
+        question="q",
+        expected=("a",),
+        k=k,
+        ranks=(rank,),
+        rank=rank,
+        passed=rank is not None and rank <= k,
+    )
+
+
+# M1
+def test_case_rank_worst_expected_path():
+    assert case_rank(["a", "b", "c"], ["a"]) == 1
+    assert case_rank(["a", "b", "c"], ["c", "a"]) == 3
+
+
+# M2
+def test_case_rank_absent_or_empty_ranking():
+    assert case_rank(["a", "b"], ["a", "missing"]) is None
+    assert case_rank([], ["a"]) is None
+
+
+# M3
+def test_summarize_pass_hit5_and_mrr():
+    ranks = [1, 2, None, 5, 6]
+    ks = [1, 1, 5, 5, 5]
+    summary = summarize([_case_result(rank, k) for rank, k in zip(ranks, ks)])
+    assert summary.passed == 2
+    assert summary.hit5 == 3
+    assert summary.mrr == pytest.approx((1 + 0.5 + 0 + 0.2 + 1 / 6) / 5)
+
+
+# M4
+def test_summarize_empty_results():
+    summary = summarize([])
+    assert summary.cases == 0
+    assert summary.passed == 0
+    assert summary.hit5 == 0
+    assert summary.mrr == 0.0
+
+
+# M5
+def test_cli_prints_summary_and_writes_json(tmp_path, capsys):
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    (tmp_path / "led.c").write_text(
+        "void led_on(void) {}\nvoid led_off(void) {}\n", encoding="utf-8"
+    )
+    (tmp_path / "button.c").write_text("void button(void) {}\n", encoding="utf-8")
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "question": "Where is main defined?",
+                    "expected": ["main.c"],
+                    "k": 5,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "out.json"
+    main([str(tmp_path), str(cases_path), "--json", str(out_path)])
+    captured = capsys.readouterr()
+    assert f"== {cases_path.name} ==" in captured.out
+    assert "summary: pass" in captured.out
+    assert re.search(r"\d+/\d+ passed", captured.out)
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert set(payload) == {"project_files", "files"}
+    assert payload["project_files"] == 3
+    assert len(payload["files"]) == 1
+    entry = payload["files"][0]
+    assert set(entry) == {"cases_file", "summary", "results"}
+    assert entry["cases_file"] == cases_path.name
+    assert set(entry["summary"]) == {"cases", "passed", "hit5", "mrr"}
+    assert entry["results"]
+    for result in entry["results"]:
+        assert set(result) == {"question", "expected", "k", "ranks", "rank", "passed"}
+
+
+# M6
+def test_semantic_case_files_schema():
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    dev = json.loads((scripts / "cube_semantic_dev.json").read_text(encoding="utf-8"))
+    heldout = json.loads(
+        (scripts / "cube_semantic_heldout.json").read_text(encoding="utf-8")
+    )
+    assert len(dev) == 12
+    assert len(heldout) == 8
+    for cases in (dev, heldout):
+        for case in cases:
+            assert isinstance(case["question"], str) and case["question"]
+            assert isinstance(case["expected"], list) and case["expected"]
+            assert all(isinstance(path, str) and path for path in case["expected"])
+            assert case["k"] == 5
+    assert {case["question"] for case in dev}.isdisjoint(
+        case["question"] for case in heldout
+    )

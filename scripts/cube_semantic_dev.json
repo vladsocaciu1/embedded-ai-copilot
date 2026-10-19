@@ -1,0 +1,14 @@
+[
+ {"question": "On STM32F4-Discovery, how is the internal flash memory erased and then written?", "expected": ["Projects/STM32F4-Discovery/Examples/FLASH/FLASH_EraseProgram/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how is an analog voltage sampled continuously without CPU involvement?", "expected": ["Projects/STM32F4-Discovery/Examples/ADC/ADC_RegularConversion_DMA/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how are sine or triangle waveforms produced on an output pin?", "expected": ["Projects/STM32F4-Discovery/Examples/DAC/DAC_SignalsGeneration/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how are the frequency and duty cycle of an incoming signal measured?", "expected": ["Projects/STM32F4-Discovery/Examples/TIM/TIM_PWMInput/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how does the board enter sleep, stop or standby to save power?", "expected": ["Projects/STM32F4-Discovery/Examples/PWR/PWR_CurrentConsumption/Src/stm32f4xx_lp_modes.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how is a buffer copied from flash to RAM by a hardware controller?", "expected": ["Projects/STM32F4-Discovery/Examples/DMA/DMA_FLASHToRAM/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how is the 1 ms tick generated from the real-time clock alarm instead of SysTick?", "expected": ["Projects/STM32F4-Discovery/Examples/HAL/HAL_TimeBase_RTC_ALARM/Src/stm32f4xx_hal_timebase_rtc_alarm.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how is non-volatile variable storage emulated using flash pages?", "expected": ["Projects/STM32F4-Discovery/Applications/EEPROM/EEPROM_Emulation/Src/eeprom.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how is a text file written to a USB memory stick?", "expected": ["Projects/STM32F4-Discovery/Applications/FatFs/FatFs_USBDisk/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how is the system clock source switched between the external crystal and the internal oscillator at runtime?", "expected": ["Projects/STM32F4-Discovery/Examples/RCC/RCC_ClockConfig/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, how do two boards exchange a message over the two-wire bus using interrupts?", "expected": ["Projects/STM32F4-Discovery/Examples/I2C/I2C_TwoBoards_ComIT/Src/main.c"], "k": 5},
+ {"question": "On STM32F4-Discovery, what happens when the user button is pressed?", "expected": ["Projects/STM32F4-Discovery/Examples/GPIO/GPIO_EXTI/Src/main.c"], "k": 5}
+]
