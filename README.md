@@ -29,7 +29,7 @@ flowchart LR
 - `app/main.py` is the HTTP layer. It serves `GET /`, `POST /ask`, and `POST /context`, checks the question, and maps service errors to the same status codes for both POST endpoints. A lifespan thread warms the index at startup. It does not read the project or call Gemini.
 - `app/ai_service.py` prepares one prompt on a path shared by `generate_answer` and `dry_run`: load files, get the index and graph from the cache, then route. Projects that fit use the full project map and count tokens (retrying once without the map if the map pushed the prompt over budget). Projects that do not fit use partial mode: a focused map, whole files selected for the question, and a partial-context notice. `generate_answer` sends that prompt to Gemini and, in partial mode, adds a footer to the answer. `dry_run` returns the same prompt and does not call Gemini. It estimates tokens from the character length unless `exact` is set, in which case it uses the same token count as `/ask`. It raises `ProjectLoadError`, `ProjectTooLargeError` (413, only when no selected file fits), `UpstreamRejectedError`, `EmptyUpstreamResponseError` (subclass of `UpstreamRejectedError`, maps to 502), `UpstreamUnavailableError`, or `RateLimitedError` (429). It does not define routes or scan the disk itself.
 - `app/gemini_retry.py` retries Gemini calls on rate limits and transient errors with backoff and a per-request budget. It does not build prompts or know about HTTP.
-- `app/context_selector.py` ranks files for a question from names in it and the index/graph, and packs whole files into a char budget. `rank_files_detailed` returns the same order as `rank_files`, plus a reason. It does not read the disk or call Gemini.
+- `app/context_selector.py` ranks files for a question from names in it and the index/graph, and packs whole files into a char budget. `rank_files_detailed` returns the same order as `rank_files`, plus a reason. `fuse_rankings` fuses that order with a semantic file order by reciprocal rank (k=60). It does not read the disk or call Gemini.
 - `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is updated incrementally for content edits and for added, removed or renamed files (up to max(200, 2%) changed files and 5,000 includes to re-resolve), and rebuilt otherwise. It does not read the disk or call Gemini.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. Full mode adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. Partial mode adds a focused map and a partial-context notice, then the selected files in rank order. It does not load the tree or call Gemini.
@@ -38,6 +38,7 @@ flowchart LR
 - `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is used by `/ask` for the project map. It does not read the disk or call Gemini.
 - `app/chunker.py` builds retrieval chunks (file cards and function chunks) from the tree-sitter index; doesn't embed, store or rank.
 - `app/embedder.py` turns text into normalized vectors with a local fastembed model, loaded lazily on first use; doesn't chunk, store or rank.
+- `app/semantic_search.py` ranks files by embedding similarity over in-memory chunk vectors; doesn't persist or call Gemini.
 - `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. `update_graph` patches a graph for content edits and path changes; the result equals a full rebuild. Used by /ask for the project map. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
@@ -243,13 +244,30 @@ Two cases are pinned at k=4, where today's ranking misses a tighter cutoff:
 
 Baseline: lexical ranking, b0c3c6a: structural 8/8, MRR 0.81; semantic dev hit@5 7/12, MRR 0.45.
 
+`--ranker hybrid` fuses the lexical/graph ranking with max embedding similarity per file by reciprocal rank (k=60). When the question names a board directory, only files under that board take a semantic rank. Vectors stay in memory. Hybrid mode requires at least one `--scope` and refuses before loading the model when the unique chunk count is above `--max-chunks` (default 5000).
+
+The gate is one hybrid run of the structural, dev, and held-out case files. Held-out is run exactly once, in that gate run, and nothing (chunking, fusion, thresholds, or case files) is tuned after seeing it. GO requires every check:
+
+1. `dev_hit5`: dev hybrid hit@5 >= 8/12
+2. `dev_mrr`: dev hybrid MRR >= 0.55
+3. `heldout_hit5`: held-out hybrid hit@5 >= held-out lexical hit@5 + 1
+4. `heldout_mrr`: held-out hybrid MRR >= held-out lexical MRR + 0.05
+5. `structural_pass`: structural hybrid passes 8/8
+6. `structural_ranks`: every structural hybrid rank <= its lexical rank + 1
+
 ```bash
 uv run pytest tests/test_selection_eval.py
 uv run python scripts/eval_selection.py <cube_root> scripts/cube_eval_cases.json scripts/cube_semantic_dev.json
 uv run python scripts/eval_selection.py <cube_root> scripts/cube_semantic_dev.json --json /tmp/eval.json
+uv run python scripts/eval_selection.py <STM32CubeF4 clone root> \
+  scripts/cube_eval_cases.json scripts/cube_semantic_dev.json scripts/cube_semantic_heldout.json \
+  --ranker hybrid --scope Projects/STM32F4-Discovery --scope Projects/STM32F429I-Discovery \
+  --gate --json /tmp/gate.json
 ```
 
-`scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph once, and ranks every given case file. With no case file it uses `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0.
+`scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph once, and ranks every given case file. With no case file it uses `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0. `--gate` and `--gate-from` exit 0 for both GO and NO-GO.
+
+Gate result (2026-10-20, code sha ca4607b, 4 CPUs): **GO**. Scope `Projects/STM32F4-Discovery` and `Projects/STM32F429I-Discovery`: 739 files, 4061 chunks, 2002 unique, embedded in 214.5 s (9.3 chunks/s), peak RSS 1,150,520 kB. Dev hybrid hit@5 8/12, MRR 0.60 (lexical 7/12, MRR 0.45). Held-out hybrid hit@5 6/8, MRR 0.33 (lexical 2/8, MRR 0.24). Structural hybrid 8/8, every hybrid rank 1. Checks: dev_hit5 8/12, dev_mrr 0.595870, heldout_hit5 hybrid 6 vs lexical 2, heldout_mrr hybrid 0.333117 vs lexical 0.236795, structural_pass 8/8, structural_ranks max hybrid-lexical 0. Held-out was run once, in this gate. Dev is the prototype's 8/12 and 0.60, and structural is 8/8.
 
 ```bash
 uv run python scripts/chunk_stats.py <project_dir>
@@ -330,6 +348,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── models.py
 │   ├── project_loader.py
 │   ├── prompts.py
+│   ├── semantic_search.py
 │   └── prompts/
 │       └── assistant.md
 ├── scripts/
@@ -367,7 +386,8 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── test_logging_startup.py
 │   ├── test_project_loader.py
 │   ├── test_prompts.py
-│   └── test_selection_eval.py
+│   ├── test_selection_eval.py
+│   └── test_semantic_search.py
 ├── .gitignore
 ├── LICENSE
 ├── pyproject.toml

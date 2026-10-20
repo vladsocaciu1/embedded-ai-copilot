@@ -4,6 +4,7 @@ import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 
@@ -16,6 +17,16 @@ DEFAULT_BATCH_SIZE = 16
 
 class EmbedderUnavailableError(RuntimeError):
     """The embedding model can't be loaded."""
+
+
+class TextEmbedder(Protocol):
+    """Anything with embed_documents and embed_query (Embedder or FakeEmbedder)."""
+
+    def embed_documents(self, texts: Sequence[str]) -> np.ndarray:
+        """Return one row per text."""
+
+    def embed_query(self, text: str) -> np.ndarray:
+        """Return one query vector."""
 
 
 def _text_embedding_class():
