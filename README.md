@@ -267,7 +267,7 @@ uv run python scripts/eval_selection.py <STM32CubeF4 clone root> \
 
 `scripts/eval_selection.py` loads a Cube tree with the default directory excludes, builds the index and graph once, and ranks every given case file. With no case file it uses `scripts/cube_eval_cases.json`. It does not call Gemini. A failing case still exits 0. `--gate` and `--gate-from` exit 0 for both GO and NO-GO.
 
-Gate result: pending the spec 25 measurement.
+Gate result (2026-10-20, code sha ca4607b, 4 CPUs): **GO**. Scope `Projects/STM32F4-Discovery` and `Projects/STM32F429I-Discovery`: 739 files, 4061 chunks, 2002 unique, embedded in 214.5 s (9.3 chunks/s), peak RSS 1,150,520 kB. Dev hybrid hit@5 8/12, MRR 0.60 (lexical 7/12, MRR 0.45). Held-out hybrid hit@5 6/8, MRR 0.33 (lexical 2/8, MRR 0.24). Structural hybrid 8/8, every hybrid rank 1. Checks: dev_hit5 8/12, dev_mrr 0.595870, heldout_hit5 hybrid 6 vs lexical 2, heldout_mrr hybrid 0.333117 vs lexical 0.236795, structural_pass 8/8, structural_ranks max hybrid-lexical 0. Held-out was run once, in this gate. Dev is the prototype's 8/12 and 0.60, and structural is 8/8.
 
 ```bash
 uv run python scripts/chunk_stats.py <project_dir>
