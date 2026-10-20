@@ -8,6 +8,14 @@ from app.config import DEFAULT_EXCLUDE_DIRS, DEFAULT_MAX_PROMPT_TOKENS, Settings
 from app.index_cache import IndexCache
 
 
+@pytest.fixture(autouse=True)
+def forbid_real_embedding_model(monkeypatch):
+    def _forbid():
+        raise AssertionError("tests must not load a real embedding model")
+
+    monkeypatch.setattr("app.embedder._text_embedding_class", _forbid)
+
+
 @pytest.fixture
 def ai_service(monkeypatch, tmp_path):
     """Import ai_service with Gemini configured, then replace the live client.

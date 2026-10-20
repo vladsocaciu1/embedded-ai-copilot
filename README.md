@@ -4,7 +4,7 @@ This is an AI assistant for understanding embedded C/C++ codebases. You send a q
 
 ## Status
 
-Phase 3 complete. Phase 4 (hardening) in progress.
+Phase 4 complete. Phase 5 (semantic retrieval) in progress.
 
 ## Request path
 
@@ -33,10 +33,11 @@ flowchart LR
 - `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is updated incrementally for content edits and for added, removed or renamed files (up to max(200, 2%) changed files and 5,000 includes to re-resolve), and rebuilt otherwise. It does not read the disk or call Gemini.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. Full mode adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. Partial mode adds a focused map and a partial-context notice, then the selected files in rank order. It does not load the tree or call Gemini.
-- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
+- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, `SEMANTIC_SEARCH`, `EMBEDDING_MODEL`, `EMBEDDING_CACHE_DIR`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
 - `app/models.py` holds the `ProjectFile` dataclass, the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`, `ProjectMap`), `Chunk`, `RankedFile`, `PreparedPrompt`, and `Answer` / `AnswerContext`. The HTTP body is `AskRequest` in `main.py`.
 - `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is used by `/ask` for the project map. It does not read the disk or call Gemini.
 - `app/chunker.py` builds retrieval chunks (file cards and function chunks) from the tree-sitter index; doesn't embed, store or rank.
+- `app/embedder.py` turns text into normalized vectors with a local fastembed model, loaded lazily on first use; doesn't chunk, store or rank.
 - `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. `update_graph` patches a graph for content edits and path changes; the result equals a full rebuild. Used by /ask for the project map. It does not read the disk or call Gemini.
 - `app/logging_config.py` sets up logging. It does not choose the log messages.
 
@@ -64,6 +65,12 @@ GEMINI_MODEL=your-model
 # EXCLUDE_DIRS=CMSIS,*_HAL_Driver,Middlewares,third_party,vendor,external,GenData
 # Optional: max prompt size in tokens (default 200000; Gemini 3.1 Pro input pricing doubles above 200k).
 # MAX_PROMPT_TOKENS=200000
+# Optional: experimental; `local` is accepted but not used by /ask until a later Phase 5 step.
+# SEMANTIC_SEARCH=off
+# Optional: local embedding model (default BAAI/bge-small-en-v1.5).
+# EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+# Optional: models and vectors; default .cache/ in the repo.
+# EMBEDDING_CACHE_DIR=.cache
 ```
 
 Startup fails if either value is missing or empty (`RuntimeError: GEMINI_API_KEY is not set.` or `RuntimeError: GEMINI_MODEL is not set.`).
@@ -252,6 +259,28 @@ uv run python scripts/chunk_stats.py <project_dir>
 
 On STM32CubeF4 (Projects only): 16,595 files, 11,911 parsed, 64,994 chunks, 18,451 unique, 14.07M chars (~3.5M tokens), chunking 1.1 s.
 
+## Embedding check
+
+```bash
+uv run python scripts/embed_check.py <STM32CubeF4 clone root> --scope Projects/STM32F4-Discovery
+```
+
+Embeds one board folder. `--scope` is required, and the check stays on that folder rather than the whole Cube. The script loads the project with the default directory excludes, builds the index, chunks it, and embeds the unique chunk texts under the scope with the local model.
+
+Each line:
+
+- `files N parsed P` — files loaded from the project, and how many tree-sitter parsed.
+- `scope DIR files F chunks C unique U` — files, chunks, and unique texts inside the scope. Several `--scope` values are joined with commas.
+- `model NAME cache CACHE/models (present|absent before load)` — model name, cache directory, and whether that directory existed before this run.
+- `model load S.S s` — seconds to load the model, including the download on a cold run. Timed around one warm-up query.
+- `model files X.X MB` — size of regular files under the model cache, in decimal megabytes. Symlinks are not followed.
+- `embed U chunks in S.S s (R.R chunks/s)` — one `embed_documents` call over the unique texts.
+- `peak_rss_mb M` — peak resident set size of this process, in megabytes.
+
+On the measurement box (8 vCPU), STM32F4-Discovery was 298 parsed files, 1,673 chunks, 1,043 unique, about 55–80 s (about 13–18 chunks/s), peak RSS about 1.1 GB, and model files about 67 MB. The first run downloads about 67 MB into `.cache/models`. A later run loads that cache in about 0.5 s.
+
+`SEMANTIC_SEARCH=local` is accepted and validated. It is not used by `/ask` yet.
+
 ## Graph update check
 
 `uv run python scripts/graph_update_check.py <project_dir> [--file REL_PATH] [--no-paths]`
@@ -263,7 +292,7 @@ A path change with an uncommon name stays within `get` <= 1.0 s. Adding, removin
 
 Each module has one job. Domain data is a dataclass (`ProjectFile`, `Settings`). Pydantic validates the HTTP request (`AskRequest`). The loader, the prompt builder, and the Gemini client are called directly.
 
-There is no RAG, agents, vector database, or LangChain. Phase 3 adds a tree-sitter code index used for the project map. When the project does not fit the prompt budget, files are selected from names in the question and the index and graph, without embeddings, and sent whole. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
+Embeddings are being added behind SEMANTIC_SEARCH (default off); no vector database (numpy). Phase 3 adds a tree-sitter code index used for the project map. When the project does not fit the prompt budget, files are selected from names in the question and the index and graph, without embeddings, and sent whole. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
 
 ## Phase 3 summary
 
@@ -278,7 +307,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 3. Phase 2: smarter project loading (done)
 4. Phase 3: tree-sitter / code structure (done)
 5. Phase 4: hardening: MIT license, Gemini rate-limit retries, incremental graph updates (done)
-6. Phase 5: RAG / embeddings / ChromaDB
+6. Phase 5: RAG / embeddings / local vector index (in progress)
 7. Phase 6: agentic AI
 
 ## Layout
@@ -293,6 +322,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── code_index.py
 │   ├── config.py
 │   ├── context_selector.py
+│   ├── embedder.py
 │   ├── gemini_retry.py
 │   ├── index_cache.py
 │   ├── logging_config.py
@@ -307,6 +337,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── cube_semantic_dev.json
 │   ├── chunk_stats.py
 │   ├── cube_semantic_heldout.json
+│   ├── embed_check.py
 │   ├── eval_selection.py
 │   └── graph_update_check.py
 ├── sample_project/
@@ -321,6 +352,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │       └── main.c
 ├── tests/
 │   ├── conftest.py
+│   ├── fake_embedder.py
 │   ├── test_ai_service.py
 │   ├── test_api.py
 │   ├── test_chunker.py
@@ -328,6 +360,8 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── test_code_index.py
 │   ├── test_config.py
 │   ├── test_context_selector.py
+│   ├── test_embed_check.py
+│   ├── test_embedder.py
 │   ├── test_gemini_retry.py
 │   ├── test_index_cache.py
 │   ├── test_logging_startup.py

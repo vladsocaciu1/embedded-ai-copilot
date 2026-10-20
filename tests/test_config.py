@@ -1,22 +1,31 @@
 import importlib
+import logging
 import os
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
 import app.config as config
 from app.config import (
+    DEFAULT_EMBEDDING_MODEL,
     DEFAULT_EXCLUDE_DIRS,
     DEFAULT_MAX_PROMPT_TOKENS,
     DEFAULT_PROJECT_PATH,
+    load_embedding_settings,
     load_settings,
 )
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _DOTENV_TESTS = {
     "test_load_settings_honors_dotenv_file",
     "test_load_settings_honors_project_path_in_dotenv_file",
     "test_load_settings_honors_exclude_dirs_in_dotenv_file",
     "test_load_settings_honors_max_prompt_tokens_in_dotenv_file",
+    "test_load_embedding_settings_honors_dotenv_file",
 }
 
 
@@ -31,6 +40,9 @@ def stub_dotenv_and_clear_env(monkeypatch, request):
     monkeypatch.delenv("PROJECT_PATH", raising=False)
     monkeypatch.delenv("EXCLUDE_DIRS", raising=False)
     monkeypatch.delenv("MAX_PROMPT_TOKENS", raising=False)
+    monkeypatch.delenv("SEMANTIC_SEARCH", raising=False)
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("EMBEDDING_CACHE_DIR", raising=False)
 
 def test_load_settings_returns_settings_for_valid_dir_and_env(tmp_path, monkeypatch):
 
@@ -490,3 +502,186 @@ def test_load_settings_honors_max_prompt_tokens_in_dotenv_file(tmp_path, monkeyp
     assert settings.max_prompt_tokens == 150_000
     assert settings.gemini_api_key == "from-dotenv-key"
     assert settings.gemini_model == "from-dotenv-model"
+
+def test_g1_embedding_settings_defaults(tmp_path, monkeypatch):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+
+    # Act
+    # Use the module attribute. test_importing_config_has_no_side_effects reloads
+    # app.config, so names imported at the top of this file are the previous class.
+    embedding = config.load_embedding_settings()
+    settings = config.load_settings(tmp_path)
+    by_keyword = config.Settings(
+        project_path=tmp_path,
+        gemini_api_key="test-key",
+        gemini_model="test-model",
+    )
+
+    # Assert
+    assert embedding == config.EmbeddingSettings()
+    assert embedding.semantic_search == "off"
+    assert embedding.model == config.DEFAULT_EMBEDDING_MODEL
+    assert embedding.cache_dir == config.DEFAULT_EMBEDDING_CACHE_DIR
+    assert settings.embedding == config.EmbeddingSettings()
+    assert by_keyword.embedding == config.EmbeddingSettings()
+
+def test_g2_semantic_search_parses(tmp_path, monkeypatch, caplog):
+
+    # Arrange
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-model")
+    caplog.set_level(logging.INFO)
+
+    # Act / Assert
+    monkeypatch.setenv("SEMANTIC_SEARCH", "local")
+    caplog.clear()
+    settings = load_settings(tmp_path)
+    assert settings.embedding.semantic_search == "local"
+    logged = [
+        record
+        for record in caplog.records
+        if record.message
+        == f"Semantic search local (model {DEFAULT_EMBEDDING_MODEL}); not used by /ask yet."
+    ]
+    assert len(logged) == 1
+    assert logged[0].levelno == logging.INFO
+
+    monkeypatch.setenv("SEMANTIC_SEARCH", " LOCAL ")
+    assert load_embedding_settings().semantic_search == "local"
+
+    monkeypatch.setenv("SEMANTIC_SEARCH", "Off")
+    caplog.clear()
+    settings = load_settings(tmp_path)
+    assert settings.embedding.semantic_search == "off"
+    assert not any("Semantic search" in record.message for record in caplog.records)
+
+    monkeypatch.setenv("SEMANTIC_SEARCH", "   ")
+    assert load_embedding_settings().semantic_search == "off"
+
+    monkeypatch.delenv("SEMANTIC_SEARCH", raising=False)
+    assert load_embedding_settings().semantic_search == "off"
+
+@pytest.mark.parametrize("raw", ["gemini", "on", "1"])
+def test_g2_invalid_semantic_search_raises_value_error(monkeypatch, caplog, raw):
+
+    # Arrange
+    monkeypatch.setenv("SEMANTIC_SEARCH", raw)
+    caplog.set_level(logging.ERROR)
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="SEMANTIC_SEARCH must be one of: off, local."):
+        load_embedding_settings()
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+def test_g3_embedding_model_blank_and_stripped(monkeypatch):
+
+    # Arrange / Act / Assert
+    monkeypatch.setenv("EMBEDDING_MODEL", "   ")
+    assert load_embedding_settings().model == DEFAULT_EMBEDDING_MODEL
+
+    monkeypatch.setenv("EMBEDDING_MODEL", "  jinaai/jina-embeddings-v2-base-code ")
+    assert load_embedding_settings().model == "jinaai/jina-embeddings-v2-base-code"
+
+def test_g4_embedding_cache_dir(tmp_path, monkeypatch, caplog):
+
+    # Arrange
+    absolute = tmp_path / "absolute-cache"
+    monkeypatch.setenv("EMBEDDING_CACHE_DIR", str(absolute))
+
+    # Act
+    settings = load_embedding_settings()
+
+    # Assert
+    assert settings.cache_dir == absolute.resolve()
+    assert not settings.cache_dir.exists()
+
+    root = tmp_path / "root"
+    cwd = tmp_path / "cwd"
+    root.mkdir()
+    cwd.mkdir()
+    monkeypatch.setattr(config, "BASE_DIR", root)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("EMBEDDING_CACHE_DIR", "rel-cache")
+    resolved = load_embedding_settings().cache_dir
+    assert resolved == (root / "rel-cache").resolve()
+    assert not resolved.exists()
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("EMBEDDING_CACHE_DIR", "~/home-cache")
+    assert load_embedding_settings().cache_dir == (tmp_path / "home-cache").resolve()
+    assert not (tmp_path / "home-cache").exists()
+
+    cache_file = tmp_path / "not_a_dir"
+    cache_file.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("EMBEDDING_CACHE_DIR", str(cache_file))
+    caplog.set_level(logging.ERROR)
+    caplog.clear()
+    with pytest.raises(NotADirectoryError):
+        load_embedding_settings()
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+    missing = tmp_path / "missing-cache"
+    monkeypatch.setenv("EMBEDDING_CACHE_DIR", str(missing))
+    assert load_embedding_settings().cache_dir == missing.resolve()
+    assert not missing.exists()
+
+def test_g6_import_does_not_import_fastembed():
+
+    # Arrange
+    code = (
+        "import sys\n"
+        "import app.config\n"
+        "import app.embedder\n"
+        "assert 'fastembed' not in sys.modules\n"
+    )
+
+    # Act
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    # Assert
+    assert result.returncode == 0, result.stderr
+    assert "fastembed" not in result.stdout
+
+def test_load_embedding_settings_honors_dotenv_file(tmp_path, monkeypatch):
+
+    # Arrange
+    cache = tmp_path / "embed-cache"
+    (tmp_path / ".env").write_text(
+        "SEMANTIC_SEARCH=local\n"
+        "EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code\n"
+        f"EMBEDDING_CACHE_DIR={cache}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    # setenv then delenv so monkeypatch records the names. delenv on an
+    # absent var records nothing, and load_dotenv writes them into os.environ.
+    for name in (
+        "GEMINI_API_KEY",
+        "GEMINI_MODEL",
+        "SEMANTIC_SEARCH",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_CACHE_DIR",
+    ):
+        monkeypatch.setenv(name, "placeholder")
+        monkeypatch.delenv(name, raising=False)
+
+    # Act
+    settings = load_embedding_settings()
+
+    # Assert
+    assert os.getenv("GEMINI_API_KEY") is None
+    assert os.getenv("GEMINI_MODEL") is None
+    assert settings.semantic_search == "local"
+    assert settings.model == "jinaai/jina-embeddings-v2-base-code"
+    assert settings.cache_dir == cache.resolve()
+    assert not cache.exists()
