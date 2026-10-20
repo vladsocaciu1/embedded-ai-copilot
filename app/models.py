@@ -102,12 +102,21 @@ class ProjectMap:
 class RankedFile:
     path: Path
     reason: Literal[
-        "named", "defines", "pair", "call", "include", "focus", "lexical", "entry"
+        "named",
+        "defines",
+        "pair",
+        "call",
+        "include",
+        "focus",
+        "lexical",
+        "entry",
+        "semantic",
     ]
     focus: int
     tier: int  # 0-4 structural, 9 none
     hits: int
     lexical: int
+    semantic: int | None = None
 
 
 @dataclass(frozen=True)

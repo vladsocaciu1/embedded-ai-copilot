@@ -1,3 +1,4 @@
+import dataclasses
 import re
 from collections.abc import Mapping, Sequence
 from fnmatch import fnmatchcase
@@ -6,6 +7,8 @@ from pathlib import Path
 from app.code_graph import CodeGraph
 from app.models import FileSymbols, ProjectFile, ProjectIndex, RankedFile, SymbolKind
 from app.project_loader import SUPPORTED_EXTENSIONS
+
+RRF_K = 60
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_.\-/\\:]+")
 _CAMEL_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
@@ -157,6 +160,82 @@ def rank_files(
     return tuple(
         ranked.path for ranked in rank_files_detailed(question, index, graph)
     )
+
+
+def fuse_rankings(
+    ranked: Sequence[RankedFile],
+    semantic_order: Sequence[Path],
+    k: int = RRF_K,
+) -> tuple[RankedFile, ...]:
+    ranked_items = tuple(ranked)
+    focus = {item.path for item in ranked_items if item.focus > 0}
+    sem_paths: list[Path] = []
+    seen_sem: set[Path] = set()
+    for path in semantic_order:
+        if path in seen_sem:
+            continue
+        seen_sem.add(path)
+        if focus and path not in focus:
+            continue
+        sem_paths.append(path)
+    sem_rank = {path: index for index, path in enumerate(sem_paths, start=1)}
+    lex_rank: dict[Path, int] = {}
+    by_path: dict[Path, RankedFile] = {}
+    for index, item in enumerate(ranked_items, start=1):
+        lex_rank.setdefault(item.path, index)
+        by_path.setdefault(item.path, item)
+
+    def score(path: Path) -> float:
+        total = 0.0
+        if path in lex_rank:
+            total += 1.0 / (k + lex_rank[path])
+        if path in sem_rank:
+            total += 1.0 / (k + sem_rank[path])
+        return total
+
+    if focus:
+        focus_paths = [item.path for item in ranked_items if item.path in focus]
+        rest = [item for item in ranked_items if item.path not in focus]
+        focus_paths.sort(key=lambda path: (-score(path), path.parts))
+        ordered = [
+            dataclasses.replace(by_path[path], semantic=sem_rank.get(path))
+            for path in focus_paths
+        ]
+        ordered.extend(
+            dataclasses.replace(item, semantic=None) for item in rest
+        )
+        return tuple(ordered)
+
+    pool: list[Path] = []
+    seen_pool: set[Path] = set()
+    for item in ranked_items:
+        if item.path not in seen_pool:
+            pool.append(item.path)
+            seen_pool.add(item.path)
+    for path in sem_paths:
+        if path not in seen_pool:
+            pool.append(path)
+            seen_pool.add(path)
+    pool.sort(key=lambda path: (-score(path), path.parts))
+    fused: list[RankedFile] = []
+    for path in pool:
+        rank = sem_rank.get(path)
+        item = by_path.get(path)
+        if item is None:
+            fused.append(
+                RankedFile(
+                    path=path,
+                    reason="semantic",
+                    focus=0,
+                    tier=9,
+                    hits=0,
+                    lexical=0,
+                    semantic=rank,
+                )
+            )
+        else:
+            fused.append(dataclasses.replace(item, semantic=rank))
+    return tuple(fused)
 
 
 def pack_files(

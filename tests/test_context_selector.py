@@ -3,8 +3,8 @@ from pathlib import Path
 
 from app.code_graph import build_graph
 from app.code_index import build_index
-from app.context_selector import pack_files, rank_files, rank_files_detailed
-from app.models import ProjectFile
+from app.context_selector import fuse_rankings, pack_files, rank_files, rank_files_detailed
+from app.models import ProjectFile, RankedFile
 
 
 def _rank(question: str, files: list[ProjectFile]) -> tuple[Path, ...]:
@@ -337,3 +337,153 @@ def test_rank_files_detailed_entry_reason_when_no_candidates():
         and item.lexical == 0
         for item in detailed
     )
+
+
+def _ranked(
+    path: str,
+    *,
+    reason: str = "focus",
+    focus: int = 1,
+    tier: int = 9,
+    hits: int = 0,
+    lexical: int = 0,
+) -> RankedFile:
+    return RankedFile(Path(path), reason, focus, tier, hits, lexical)
+
+
+# F1
+def test_f1_focus_fusion_follows_rrf_and_keeps_non_focus_order():
+    ranked = (
+        _ranked("a.c", reason="named", tier=0, hits=2, lexical=1),
+        _ranked("b.c", reason="focus", lexical=4),
+        _ranked("c.c", reason="lexical", focus=1, tier=9, hits=1, lexical=3),
+        _ranked("z.c", reason="lexical", focus=0, lexical=2),
+        _ranked("m.c", reason="entry", focus=0, tier=9),
+    )
+    fused = fuse_rankings(ranked, [Path("c.c"), Path("a.c")])
+    k = 60
+    sem = {Path("c.c"): 1, Path("a.c"): 2}
+    lex = {Path("a.c"): 1, Path("b.c"): 2, Path("c.c"): 3}
+
+    def score(path: Path) -> float:
+        total = 1 / (k + lex[path])
+        if path in sem:
+            total += 1 / (k + sem[path])
+        return total
+
+    focus_order = tuple(sorted(lex, key=lambda path: (-score(path), path.parts)))
+    assert tuple(item.path for item in fused) == focus_order + (Path("z.c"), Path("m.c"))
+    assert [item.semantic for item in fused[:3]] == [
+        sem.get(path) for path in focus_order
+    ]
+    assert [item.semantic for item in fused[3:]] == [None, None]
+    by_path = {item.path: item for item in ranked}
+    for item in fused:
+        source = by_path[item.path]
+        assert item.reason == source.reason
+        assert item.focus == source.focus
+        assert item.tier == source.tier
+        assert item.hits == source.hits
+        assert item.lexical == source.lexical
+
+
+# F2
+def test_f2_semantic_paths_outside_focus_do_not_shift_ranks():
+    ranked = (
+        _ranked("a.c"),
+        _ranked("b.c"),
+        _ranked("c.c"),
+        _ranked("n.c", reason="lexical", focus=0),
+    )
+    inside = fuse_rankings(ranked, [Path("c.c"), Path("a.c")])
+    outside = fuse_rankings(
+        ranked,
+        [Path("outside.c"), Path("n.c"), Path("c.c"), Path("a.c")],
+    )
+
+    assert outside == inside
+    semantic = {item.path: item.semantic for item in outside}
+    assert semantic == {
+        Path("a.c"): 2,
+        Path("b.c"): None,
+        Path("c.c"): 1,
+        Path("n.c"): None,
+    }
+
+
+# F3
+def test_f3_empty_semantic_order_matches_input():
+    ranked = (
+        _ranked("b.c", reason="named", tier=0, hits=1, lexical=2),
+        _ranked("a.c", reason="lexical", focus=0, lexical=1),
+    )
+
+    assert fuse_rankings(ranked, ()) == ranked
+    assert fuse_rankings(ranked, []) == ranked
+
+
+# F4
+def test_f4_symmetric_tie_breaks_by_path_parts():
+    later = _ranked("b.c", hits=1, lexical=3)
+    earlier = _ranked("a.c", hits=1, lexical=3)
+    ranked = (later, earlier)
+    order = [Path("a.c"), Path("b.c")]
+
+    first = fuse_rankings(ranked, order)
+    second = fuse_rankings(ranked, order)
+
+    assert [item.path for item in first] == order
+    assert first == second
+
+
+# F5
+def test_f5_without_focus_semantic_only_path_uses_semantic_reason():
+    entry = RankedFile(Path("src/main.c"), "entry", 0, 9, 0, 0)
+    only = Path("only.c")
+
+    fused = fuse_rankings((entry,), [only, entry.path])
+
+    assert fused[0] == RankedFile(entry.path, "entry", 0, 9, 0, 0, 2)
+    assert fused[1] == RankedFile(only, "semantic", 0, 9, 0, 0, 1)
+
+
+# F6
+def test_f6_duplicates_are_ignored_and_k_changes_order():
+    first = Path("a.c")
+    second = Path("b.c")
+    ranked = (_ranked("a.c"), _ranked("b.c"))
+    fused = fuse_rankings(ranked, [first, first, second])
+
+    assert [item.semantic for item in fused] == [1, 2]
+
+    alone = Path("s.c")
+    fillers = [Path(f"f{index}.c") for index in range(3)]
+    both = Path("m.c")
+    extra = Path("x.c")
+    rows = [_ranked("s.c")]
+    rows.extend(_ranked(path.as_posix()) for path in fillers)
+    rows.append(_ranked("m.c"))
+    rows.append(_ranked("x.c"))
+    semantic = [*fillers, extra, both]
+    order_k0 = [item.path for item in fuse_rankings(rows, semantic, k=0)]
+    order_k60 = [item.path for item in fuse_rankings(rows, semantic, k=60)]
+
+    assert order_k0.index(alone) < order_k0.index(both)
+    assert order_k60.index(both) < order_k60.index(alone)
+
+
+# F7
+def test_f7_rank_files_detailed_semantic_is_none():
+    detailed = _detailed(
+        "What does Can_Init do?",
+        [
+            ProjectFile(Path("inc/can.h"), "void Can_Init(void);\n"),
+            ProjectFile(
+                Path("src/can.c"),
+                '#include "can.h"\nvoid Can_Init(void)\n{\n    return;\n}\n',
+            ),
+        ],
+    )
+
+    assert detailed
+    assert all(item.semantic is None for item in detailed)
