@@ -50,3 +50,6 @@ Thumbs.db
 
 # Embedding models and vectors
 .cache/
+
+# Local firmware packs. Too large to vendor; point PROJECT_PATH here.
+/STM32CubeF4/
