@@ -1238,3 +1238,20 @@ def test_x2_seeded_random_path_changes_match_a_rebuild(monkeypatch):
         assert previous.snapshot() == before, step
         rebuilt = build_graph(build_index(project_files()))
         assert graph.snapshot() == rebuilt.snapshot(), step
+
+
+def test_i2_config_is_a_definition_section_and_node_are_not():
+    files = [
+        ProjectFile(Path("Kconfig"), "config X\n\tbool\n"),
+        ProjectFile(Path("prj.conf"), "CONFIG_X=y\n"),
+        ProjectFile(Path("doc.rst"), "Title\n=====\n\nbody\n"),
+        ProjectFile(Path("app.overlay"), "led0: led_0 {\n};\n"),
+    ]
+    graph = build_graph(build_index(files))
+
+    assert {ref.path for ref in graph.definitions("CONFIG_X")} == {
+        Path("Kconfig"),
+        Path("prj.conf"),
+    }
+    assert graph.definitions("Title") == ()
+    assert graph.definitions("led0") == ()

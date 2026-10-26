@@ -16,6 +16,7 @@ from app.models import (
     Symbol,
     SymbolKind,
 )
+from app.text_files import index_text, text_kind
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +92,13 @@ _Frame = tuple[Node, tuple[str, ...], str | None, bool]
 def index_file(project_file: ProjectFile) -> FileSymbols:
     grammar = _grammar_for(project_file.path)
     if grammar is None:
+        kind = text_kind(project_file.path)
+        symbols = index_text(project_file, kind) if kind else ()
         return FileSymbols(
             path=project_file.path,
             grammar=None,
             has_errors=False,
-            symbols=(),
+            symbols=symbols,
             includes=(),
             calls=(),
         )

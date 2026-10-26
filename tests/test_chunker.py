@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from app.chunker import CARD_SYMBOL_KINDS, chunk_file, chunk_index, unique_texts
+from app.chunker import (
+    CARD_SYMBOL_KINDS,
+    CHUNK_FORMAT,
+    chunk_file,
+    chunk_index,
+    unique_texts,
+)
 from app.code_index import build_index, index_file
 from app.config import DEFAULT_EXCLUDE_DIRS
 from app.models import ProjectFile, SymbolKind
@@ -379,3 +385,280 @@ def _chunks_line(line: str) -> tuple[int, int, int, int]:
     assert parts[4] == "function"
     assert parts[6] == "unique"
     return int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7])
+
+
+def _baseline_c_sources() -> list[ProjectFile]:
+    """C/C++ inputs of the tests above, built the same way, one file at a time.
+
+    Captured on main 2845fb2 before text-file chunking. H6 compares the key set.
+    """
+    files: list[ProjectFile] = []
+
+    def add(path: str, content: str) -> None:
+        files.append(ProjectFile(path=Path(path), content=content))
+
+    add(str(GOLDEN_PATH), GOLDEN)
+    add(str(GOLDEN_PATH), GOLDEN.replace("\n", "\r\n"))
+
+    long_comment = "/* " + ("alpha " * 200) + "*/\nvoid f(void) {}\n"
+    add("src/long.c", long_comment)
+    add("src/a.c", '#include "main.h"\nvoid f(void) {}\n')
+    add("src/a.c", "// not the card comment\nvoid f(void) {}\n")
+
+    kinds = textwrap.dedent(
+        """\
+        #define BUF 1
+        union U { int a; };
+        void proto(void);
+        int var;
+        struct Point { int x; };
+        enum Color { RED };
+        typedef int MyInt;
+        void func(void) {}
+        """
+    )
+    add("src/kinds.c", kinds)
+    none = textwrap.dedent(
+        """\
+        #define ONLY 1
+        union U { int a; };
+        void proto(void);
+        int var;
+        """
+    )
+    add("src/none.c", none)
+    add("src/dup.c", "#ifdef A\nvoid f(void) {}\n#else\nvoid f(void) {}\n#endif\n")
+    add("src/many.c", "".join(f"void f{i}(void) {{}}\n" for i in range(45)))
+
+    add("src/a.c", "// toggles the pin\n// forever\nvoid f(void) {}\n")
+    add("src/a.c", "// hello\n\nvoid f(void) {}\n")
+    lines = [f"// c{i:02d} text" for i in range(30)]
+    lines.append("void f(void) {}")
+    add("src/a.c", "\n".join(lines) + "\n")
+    long_lines = ["// " + ("abcd " * 20) for _ in range(25)]
+    long_lines.append("void f(void) {}")
+    add("src/a.c", "\n".join(long_lines) + "\n")
+
+    add("src/a.c", "void f(void)\n{\n  return 1;\n}\n")
+    long_body = ["void f(void)", "{"]
+    long_body.extend(f"  int x{i} = {i};" for i in range(200))
+    long_body.append("}")
+    add("src/a.c", "\n".join(long_body) + "\n")
+
+    add("a/b/c/d/e/f.c", "void f(void) {}\n")
+    add("src/a.c", "void f(void) {}\n")
+    add("startup.s", "nop\n")
+    add("link.ld", "SECTIONS {}\n")
+    add("inc/a.h", "void g(void);\nint x;\n")
+
+    cpp = textwrap.dedent(
+        """\
+        namespace ns {
+        class C {
+        public:
+            void m() { return; }
+        };
+        }
+        """
+    )
+    add("src/ns.cpp", cpp)
+
+    kept = "void kept(void) { return 1; }\nvoid edited(void) { return 1; }\n"
+    add("board/Examples/GPIO/Src/a.c", kept)
+    add("other/Examples/GPIO/Src/a.c", kept)
+    changed = kept.replace(
+        "edited(void) { return 1; }", "edited(void) { return 2; }"
+    )
+    add("board/Examples/GPIO/Src/a.c", changed)
+
+    add("board/Examples/GPIO/Src/a.c", "void a(void) {}\n")
+    add("other/Examples/GPIO/Src/a.c", "void a(void) {}\n")
+    add("src/c.c", "void c(void) {}\n")
+
+    add("src/a.c", "void f(void) { return; }\n")
+    add("src/b.h", "void g(void);\n")
+    add("src/c.s", "nop\n")
+    return files
+
+
+def test_h6_existing_c_chunk_keys_unchanged():
+    import json
+
+    expected = json.loads(
+        (Path(__file__).parent / "data" / "chunk_keys_main.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    keys: list[str] = []
+    for project_file in _baseline_c_sources():
+        index = build_index([project_file])
+        chunks = chunk_index(index, [project_file])
+        keys.extend(chunk.key for chunk in chunks)
+    assert sorted(set(keys)) == expected
+
+
+_KCONFIG = (
+    'config ALPHA\n'
+    '\tbool "a"\n'
+    "\n"
+    "menuconfig BETA\n"
+    '\tbool "b"\n'
+    "\n"
+    "config $(X)\n"
+    '\tbool "skip"\n'
+    "\n"
+    "config GAMMA\n"
+    '\tint "g"\n'
+)
+_KCONFIG_CARD = (
+    "file kernel/Kconfig\n"
+    "symbols: CONFIG_ALPHA CONFIG_BETA CONFIG_GAMMA"
+)
+_KCONFIG_ALPHA = (
+    "config CONFIG_ALPHA in kernel/Kconfig\n"
+    "config ALPHA\n"
+    '\tbool "a"'
+)
+_KCONFIG_BETA = (
+    "config CONFIG_BETA in kernel/Kconfig\n"
+    "menuconfig BETA\n"
+    '\tbool "b"'
+)
+_KCONFIG_GAMMA = (
+    "config CONFIG_GAMMA in kernel/Kconfig\n"
+    "config GAMMA\n"
+    '\tint "g"'
+)
+
+
+def test_h1_kconfig_card_and_config_chunks():
+    chunks = _chunks("kernel/Kconfig", _KCONFIG)
+
+    assert [chunk.kind for chunk in chunks] == ["file", "config", "config", "config"]
+    assert [chunk.name for chunk in chunks] == [
+        "",
+        "CONFIG_ALPHA",
+        "CONFIG_BETA",
+        "CONFIG_GAMMA",
+    ]
+    assert [chunk.text for chunk in chunks] == [
+        _KCONFIG_CARD,
+        _KCONFIG_ALPHA,
+        _KCONFIG_BETA,
+        _KCONFIG_GAMMA,
+    ]
+    assert all("$(X)" not in chunk.text for chunk in chunks)
+
+
+def test_h2_config_block_is_cut_at_1500_characters():
+    payload = "x" * 3988
+    full = "config LONG\n" + payload
+    assert len(full) == 4000
+    chunks = _chunks("subsys/Kconfig", full + "\n")
+    body = chunks[1].text.split("\n", 1)[1]
+
+    assert chunks[1].kind == "config"
+    assert len(body) == 1500
+    assert body == full[:1500]
+
+
+def test_h3_rst_card_sections_and_headingless_text():
+    content = "Intro\n=====\n\nhello\n\nEmpty\n=====\n"
+    chunks = _chunks("doc/index.rst", content)
+
+    assert [chunk.kind for chunk in chunks] == ["file", "section", "section"]
+    assert chunks[0].text == (
+        "file doc/index.rst\n"
+        "Intro\n"
+        "sections: Intro | Empty"
+    )
+    assert chunks[1].text == "section Intro in doc/index.rst\nhello"
+    assert chunks[1].name == "Intro"
+    assert chunks[2].text == "section Empty in doc/index.rst\n"
+    assert chunks[2].name == "Empty"
+    assert chunks[2].text.split("\n", 1)[1] == ""
+
+    notes = _chunks("doc/notes.rst", "plain notes\nsecond line\n")
+    assert len(notes) == 1
+    assert notes[0].kind == "text"
+    assert notes[0].text == "rst doc/notes.rst\nplain notes\nsecond line"
+
+
+def test_h4_text_piece_labels_limit_and_line_clip():
+    line = "a" * 750
+    halves = _chunks("src/CMakeLists.txt", f"{line}\n{line}\n")
+    assert [chunk.text for chunk in halves] == [
+        f"cmake src/CMakeLists.txt (1/2)\n{line}",
+        f"cmake src/CMakeLists.txt (2/2)\n{line}",
+    ]
+
+    many = _chunks("src/CMakeLists.txt", ("b" * 1500 + "\n") * 20)
+    assert len(many) == 8
+    assert many[0].text.startswith("cmake src/CMakeLists.txt (1/8)\n")
+    assert many[-1].text.startswith("cmake src/CMakeLists.txt (8/8)\n")
+
+    clipped = _chunks("src/CMakeLists.txt", "c" * 5000 + "\n")
+    assert len(clipped) == 1
+    assert clipped[0].text == "cmake src/CMakeLists.txt\n" + ("c" * 1500)
+
+    assert _chunks("CMakeLists.txt", "") == ()
+    assert _chunks("prj.conf", "") == ()
+
+
+def test_h5_keys_use_chunk_v1():
+    chunks = _chunks("kernel/Kconfig", _KCONFIG)
+    chunks += _chunks("src/CMakeLists.txt", "project(app)\n")
+
+    assert CHUNK_FORMAT == "chunk-v1"
+    for chunk in chunks:
+        digest = hashlib.sha256(("chunk-v1\n" + chunk.text).encode()).hexdigest()
+        assert chunk.key == digest
+
+
+def test_h7_mixed_project_keys_are_unique_and_assembly_is_skipped():
+    files = [
+        ProjectFile(path=Path("src/main.c"), content="void main(void) { return; }\n"),
+        ProjectFile(path=Path("Kconfig"), content="config FOO\n\tbool\n"),
+        ProjectFile(path=Path("doc.rst"), content="Title\n=====\n\nbody\n"),
+        ProjectFile(path=Path("CMakeLists.txt"), content="project(app)\n"),
+        ProjectFile(path=Path("startup.S"), content="nop\n"),
+    ]
+    chunks = chunk_index(build_index(files), files)
+
+    assert len({chunk.key for chunk in chunks}) == len(chunks)
+    assert len(unique_texts(chunks)) == len(chunks)
+    assert all(chunk.path.name != "startup.S" for chunk in chunks)
+    assert _chunks("startup.S", "nop\n") == ()
+
+
+def test_s1_other_kinds_line_for_text_chunks_only(tmp_path, capsys):
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "a.c").write_text("void f(void) { return; }\n", encoding="utf-8")
+    (source / "b.h").write_text("void g(void);\n", encoding="utf-8")
+
+    main([str(tmp_path)])
+    c_only = capsys.readouterr().out
+    assert "other kinds:" not in c_only
+    assert len(c_only.splitlines()) == 6
+
+    (tmp_path / "Kconfig").write_text(
+        "config FOO\n\tbool\nconfig BAR\n\tbool\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "doc.rst").write_text("Title\n=====\n\nbody\n", encoding="utf-8")
+    (tmp_path / "CMakeLists.txt").write_text("project(app)\n", encoding="utf-8")
+    main([str(tmp_path)])
+    mixed = capsys.readouterr().out.splitlines()
+    assert mixed[2] == "other kinds: config 2, section 1, text 1"
+
+    only = tmp_path / "only"
+    only.mkdir()
+    (only / "Kconfig").write_text("config FOO\n\tbool\n", encoding="utf-8")
+    main([str(only)])
+    kinds = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("other kinds:")
+    ]
+    assert kinds == ["other kinds: config 1"]

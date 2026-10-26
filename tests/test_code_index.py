@@ -3,6 +3,7 @@ import textwrap
 from pathlib import Path
 
 from app.code_index import build_index, index_file
+from app.text_files import index_text
 from app.models import (
     Call,
     FileSymbols,
@@ -550,3 +551,24 @@ def test_c7_call_line_past_300():
     )
 
     assert file_symbols.calls == (Call("late", "far_call", 313, False),)
+
+
+def test_i1_text_files_are_unparsed_and_carry_text_symbols():
+    samples = {
+        "Kconfig": ("kconfig", "config FOO\n\tbool\nconfig BAR\n\tbool\n"),
+        "doc.rst": ("rst", "Title\n=====\n\nbody\n"),
+        "board.overlay": ("devicetree", "led0: led_0 {\n};\nalias = &led0;\n"),
+        "prj.conf": ("conf", "CONFIG_FOO=y\n"),
+    }
+    for name, (kind, content) in samples.items():
+        project_file = ProjectFile(Path(name), content)
+        file_symbols = index_file(project_file)
+        assert file_symbols.grammar is None
+        assert file_symbols.has_errors is False
+        assert file_symbols.symbols == index_text(project_file, kind)
+        assert file_symbols.includes == ()
+        assert file_symbols.calls == ()
+
+    unknown = index_file(ProjectFile(Path("README.md"), "hello\n"))
+    assert unknown.grammar is None
+    assert unknown.symbols == ()
