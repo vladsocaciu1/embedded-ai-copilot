@@ -4,6 +4,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from app.models import ProjectFile
+from app.text_files import text_kind
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def load_project_files(
         ]
         for filename in filenames:
             file = dirpath / filename
-            if file.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            if file.suffix.lower() not in SUPPORTED_EXTENSIONS and text_kind(file) is None:
                 continue
             relative = file.relative_to(project_path)
             relative_posix = relative.as_posix()

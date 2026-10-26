@@ -749,3 +749,46 @@ def test_load_project_files_invalid_path_logs_error_without_summary(tmp_path, ca
         assert len(records) == 1
         assert records[0].levelno == logging.ERROR
         assert records[0].getMessage() == f"Invalid project path: {invalid}"
+
+
+def test_l1_loads_one_file_of_each_text_kind(tmp_path):
+    names = {
+        "main.c": "int main(void) { return 0; }\n",
+        "Kconfig": "config FOO\n\tbool\n",
+        "CMakeLists.txt": "project(app)\n",
+        "board.overlay": "/ {};\n",
+        "prj.conf": "CONFIG_FOO=y\n",
+        "app.yaml": "name: app\n",
+        "doc.rst": "Title\n=====\n",
+        "README.md": "hi\n",
+        "notes.txt": "hi\n",
+        "x.bin": "hi\n",
+    }
+    for name, content in names.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+
+    loaded = load_project_files(tmp_path)
+
+    assert [item.path.name for item in loaded] == [
+        "CMakeLists.txt",
+        "Kconfig",
+        "app.yaml",
+        "board.overlay",
+        "doc.rst",
+        "main.c",
+        "prj.conf",
+    ]
+
+
+def test_l2_skips_kconfig_over_size_cap(tmp_path, caplog):
+    (tmp_path / "Kconfig").write_bytes(b"a" * (600 * 1024))
+    (tmp_path / "main.c").write_text("int x;\n", encoding="utf-8")
+    caplog.set_level(logging.WARNING)
+
+    loaded = load_project_files(tmp_path)
+
+    assert [item.path.name for item in loaded] == ["main.c"]
+    assert any(
+        record.levelno == logging.WARNING and "Kconfig" in record.getMessage()
+        for record in caplog.records
+    )

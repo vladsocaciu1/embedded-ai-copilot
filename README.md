@@ -277,6 +277,8 @@ Gate result (2026-10-20, code sha ca4607b, 4 CPUs): **GO**. Scope `Projects/STM3
 
 `scripts/zephyr_eval_cases.json` holds 8 structural questions. `scripts/zephyr_semantic_dev.json` holds 18 questions tagged code, asm, kconfig, doc, conf, and devicetree. `scripts/zephyr_semantic_heldout.json` holds 8 questions tagged code, cmake, doc, and kconfig. `zephyr_semantic_heldout.json` is run once per phase gate, never to tune.
 
+What is indexed: Kconfig, CMake, devicetree (`.overlay`, `.dts`, `.dtsi`), `.conf`, YAML and rst files are loaded and chunked (Kconfig option blocks, rst sections, text pieces of at most 1,500 characters, at most 8 per file). Assembly is not (spec 31a). `app/prompts.py` shows them as "(not parsed)". `scripts/zephyr_gate.py` checks dev hit@5 at least 15/18, dev MRR at least 0.08 above the baseline, no previously passing dev case lost, structural passes equal to the case count, and at most 1,500 unique chunks in scope `.`. The held-out file runs once, only after the dev gate says GO; with `--heldout` it also requires held-out hit@5 at least 6 and at least the lexical hit@5.
+
 ```bash
 uv run python scripts/fetch_zephyr_core.py
 uv run python scripts/zephyr_check_slice.py

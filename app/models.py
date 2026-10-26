@@ -21,6 +21,9 @@ class SymbolKind(StrEnum):
     CLASS = "class"          # C++
     NAMESPACE = "namespace"  # C++
     VARIABLE = "variable"    # file/namespace scope only
+    CONFIG = "config"  # Kconfig symbol or CONFIG_ option in a .conf file
+    SECTION = "section"  # reStructuredText heading
+    NODE = "node"  # devicetree label or alias
 
 
 @dataclass(frozen=True)
@@ -65,7 +68,7 @@ class ProjectIndex:
 @dataclass(frozen=True)
 class Chunk:
     path: Path
-    kind: Literal["file", "function"]
+    kind: Literal["file", "function", "config", "section", "text"]
     name: str
     start_line: int
     end_line: int

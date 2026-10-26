@@ -378,3 +378,25 @@ def test_focused_map_file_count_matches_header():
     assert f"{shown} of {len(files)} project files" in header
     assert project_map.file_count == shown
 
+
+def test_p1_text_files_show_as_not_parsed_without_fields():
+    files = [
+        ProjectFile(path=Path("main.c"), content="void main(void) { return; }\n"),
+        ProjectFile(path=Path("Kconfig"), content="config FOO\n\tbool\n"),
+        ProjectFile(path=Path("CMakeLists.txt"), content="project(app)\n"),
+        ProjectFile(path=Path("app.overlay"), content="led0: led_0 {\n};\n"),
+        ProjectFile(path=Path("doc.rst"), content="Title\n=====\n\nbody\n"),
+    ]
+    index = build_index(files)
+    text = build_project_map(index, build_graph(index), 10**9).text
+    lines = text.splitlines()
+
+    for name in ("Kconfig", "CMakeLists.txt", "app.overlay", "doc.rst"):
+        marker = f"{name} (not parsed)"
+        assert marker in lines
+        follow = lines.index(marker) + 1
+        if follow < len(lines):
+            assert not lines[follow].startswith("  ")
+    assert "main.c (not parsed)" not in text
+    assert any(line.startswith("  ") for line in lines)
+

@@ -26,7 +26,12 @@ class GraphUpdateTooLarge(Exception):
 _SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
 _STATIC_HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl"})
-_SKIP_KINDS = frozenset({SymbolKind.PROTOTYPE, SymbolKind.NAMESPACE})
+_SKIP_KINDS = frozenset({
+    SymbolKind.PROTOTYPE,
+    SymbolKind.NAMESPACE,
+    SymbolKind.SECTION,
+    SymbolKind.NODE,
+})
 
 
 def build_graph(index: ProjectIndex) -> CodeGraph:

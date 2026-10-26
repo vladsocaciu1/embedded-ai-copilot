@@ -46,6 +46,13 @@ def main(argv: list[str]) -> None:
         f"chunks {len(chunks)} (file {file_chunks}, function {function_chunks}) "
         f"unique {unique}"
     )
+    others = [
+        (kind, sum(chunk.kind == kind for chunk in chunks))
+        for kind in ("config", "section", "text")
+    ]
+    others = [(kind, count) for kind, count in others if count]
+    if others:
+        print("other kinds: " + ", ".join(f"{kind} {count}" for kind, count in others))
     print(f"chars {chars} est_tokens {est_tokens}")
     print(f"chunk_ms {chunk_ms}")
     print(f"local embed at {LOCAL_CHUNKS_PER_SEC} chunks/s: ~{minutes} min")

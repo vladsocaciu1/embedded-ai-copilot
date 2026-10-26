@@ -7,6 +7,7 @@ from pathlib import Path
 from app.code_graph import CodeGraph
 from app.models import FileSymbols, ProjectFile, ProjectIndex, RankedFile, SymbolKind
 from app.project_loader import SUPPORTED_EXTENSIONS
+from app.text_files import text_kind
 
 RRF_K = 60
 
@@ -31,6 +32,9 @@ _TERM_KINDS = frozenset({
     SymbolKind.ENUM,
     SymbolKind.CLASS,
     SymbolKind.VARIABLE,
+    SymbolKind.CONFIG,
+    SymbolKind.SECTION,
+    SymbolKind.NODE,
 })
 
 
@@ -273,7 +277,14 @@ def _is_code_like(token: str) -> bool:
 
 def _named_file_tail(token: str) -> tuple[str, ...] | None:
     lowered = token.lower()
-    if not any(lowered.endswith(suffix) for suffix in SUPPORTED_EXTENSIONS):
+    segment = lowered.rsplit("/", 1)[-1]
+    named = (
+        any(lowered.endswith(suffix) for suffix in SUPPORTED_EXTENSIONS)
+        or text_kind(Path(lowered)) is not None
+        or segment == "cmakelists.txt"
+        or segment.startswith("kconfig")
+    )
+    if not named:
         return None
     return tuple(part.lower() for part in re.split(r"[/\\]", token) if part)
 

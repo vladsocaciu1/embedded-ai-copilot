@@ -411,3 +411,30 @@ def test_k5_old_graph_stays_and_hit_returns_the_updated_graph():
     again = [ProjectFile(item.path, item.content) for item in edited]
     _index, hit = cache.get(PROJECT, again)
     assert hit is updated
+
+
+def test_i3_editing_a_kconfig_reparses_only_that_file(monkeypatch):
+    original = _files(
+        ("a.c", "int a(void) { return 1; }\n"),
+        ("Kconfig", "config FOO\n\tbool\n"),
+        ("c.c", "int c(void) { return 3; }\n"),
+    )
+    cache = IndexCache()
+    first, _graph = cache.get(PROJECT, original)
+    spies = _install_spies(monkeypatch)
+    edited = ProjectFile(path=Path("Kconfig"), content="config BAR\n\tbool\n")
+    files = [original[0], edited, original[2]]
+
+    index, graph = cache.get(PROJECT, files)
+
+    assert spies.index_calls == [(edited,)]
+    assert spies.graph_calls == []
+    assert len(spies.update_calls) == 1
+    assert spies.update_calls[0][1] == [Path("Kconfig")]
+    _equals_uncached(index, graph, files)
+    by_path = {file_symbols.path: file_symbols for file_symbols in first.files}
+    second = {file_symbols.path: file_symbols for file_symbols in index.files}
+    assert second[Path("a.c")] is by_path[Path("a.c")]
+    assert second[Path("c.c")] is by_path[Path("c.c")]
+    assert "CONFIG_BAR" in _symbol_names(index)
+    assert "CONFIG_FOO" not in _symbol_names(index)

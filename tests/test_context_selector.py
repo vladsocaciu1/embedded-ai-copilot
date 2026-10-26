@@ -487,3 +487,49 @@ def test_f7_rank_files_detailed_semantic_is_none():
 
     assert detailed
     assert all(item.semantic is None for item in detailed)
+
+
+def test_x1_config_option_terms_rank_the_defining_kconfig_first():
+    from app.context_selector import _file_terms
+
+    foo = ProjectFile(Path("kernel/Kconfig"), "config FOO\n\tbool\n")
+    bar = ProjectFile(Path("subsys/Kconfig"), "config BAR\n\tbool\n")
+    other = ProjectFile(Path("kernel/other.c"), "void unrelated(void) {}\n")
+    index = build_index([other, foo, bar])
+    terms = _file_terms(next(file for file in index.files if file.path == foo.path))
+
+    assert "foo" in terms
+    assert "config" in terms
+    ranked = _rank("How is CONFIG_FOO used?", [other, bar, foo])
+    assert ranked[0] == foo.path
+
+
+def test_x2_named_kconfig_and_cmakelists_rank_first():
+    kconfig = Path("kernel/Kconfig")
+    cmake = Path("CMakeLists.txt")
+    main = Path("src/main.c")
+    other = Path("src/other.c")
+    files = [
+        ProjectFile(other, "void other(void) {}\n"),
+        ProjectFile(cmake, "project(app)\n"),
+        ProjectFile(kconfig, "config A\n\tbool\n"),
+        ProjectFile(main, "void main(void) {}\n"),
+    ]
+
+    assert _rank("Explain the Kconfig options", files)[0] == kconfig
+    assert _rank("What is in CMakeLists.txt?", files)[0] == cmake
+    assert _rank("Explain src/main.c", files)[0] == main
+
+
+def test_x3_rst_section_title_is_a_file_term():
+    from app.context_selector import _file_terms
+
+    rst = ProjectFile(
+        Path("doc/index.rst"),
+        "Thread states\n=============\n\nA thread can be unready.\n",
+    )
+    index = build_index([rst])
+
+    terms = _file_terms(index.files[0])
+    assert "thread" in terms
+    assert "states" in terms

@@ -11,6 +11,7 @@ from app.models import (
     Symbol,
     SymbolKind,
 )
+from app.text_files import FILE_MAX_PIECES, PIECE_CAP, pieces, text_kind
 
 CHUNK_FORMAT = "chunk-v1"
 FILE_COMMENT_CAP = 600
@@ -109,9 +110,50 @@ def _function_chunk(fs: FileSymbols, content: str, symbol: Symbol) -> Chunk:
     )
 
 
+def _make(fs: FileSymbols, kind: str, name: str, start: int, end: int, text: str) -> Chunk:
+    return Chunk(
+        path=fs.path, kind=kind, name=name, start_line=start, end_line=end, text=text, key=_key(text)
+    )
+
+
+def _chunk_text_file(fs: FileSymbols, content: str, kind: str) -> tuple[Chunk, ...]:
+    where = tail(fs.path)
+    lines = content.splitlines()
+    last = max(1, len(lines))
+    chunks: list[Chunk] = []
+    if kind == "kconfig":
+        configs = [s for s in fs.symbols if s.kind is SymbolKind.CONFIG]
+        names = " ".join(s.name for s in configs[:CARD_SYMBOL_LIMIT])
+        chunks.append(_make(fs, "file", "", 1, last, f"file {where}\nsymbols: {names}"))
+        for s in configs:
+            block = "\n".join(lines[s.start_line - 1 : s.end_line]).rstrip()[:PIECE_CAP]
+            chunks.append(
+                _make(fs, "config", s.name, s.start_line, s.end_line, f"config {s.name} in {where}\n{block}")
+            )
+        return tuple(chunks)
+    sections = [s for s in fs.symbols if s.kind is SymbolKind.SECTION]
+    if kind == "rst" and sections:
+        titles = " | ".join(s.name for s in sections[:CARD_SYMBOL_LIMIT])
+        chunks.append(
+            _make(fs, "file", "", 1, last, f"file {where}\n{sections[0].name}\nsections: {titles}")
+        )
+        for s in sections:
+            body = "\n".join(lines[s.start_line + 1 : s.end_line]).strip()[:PIECE_CAP]
+            chunks.append(
+                _make(fs, "section", s.name, s.start_line, s.end_line, f"section {s.name} in {where}\n{body}")
+            )
+        return tuple(chunks)
+    parts = pieces(content, PIECE_CAP, FILE_MAX_PIECES)
+    for i, piece in enumerate(parts, 1):
+        label = where if len(parts) == 1 else f"{where} ({i}/{len(parts)})"
+        chunks.append(_make(fs, "text", label, 1, last, f"{kind} {label}\n{piece}"))
+    return tuple(chunks)
+
+
 def chunk_file(fs: FileSymbols, content: str) -> tuple[Chunk, ...]:
     if fs.grammar is None:
-        return ()
+        kind = text_kind(fs.path)
+        return _chunk_text_file(fs, content, kind) if kind else ()
     chunks = [_card(fs, content)]
     for symbol in fs.symbols:
         if symbol.kind is SymbolKind.FUNCTION:
@@ -125,7 +167,7 @@ def chunk_index(
     contents = {project_file.path: project_file.content for project_file in files}
     chunks: list[Chunk] = []
     for file_symbols in index.files:
-        if file_symbols.grammar is None:
+        if file_symbols.grammar is None and text_kind(file_symbols.path) is None:
             continue
         content = contents.get(file_symbols.path)
         if content is None:
