@@ -310,11 +310,20 @@ def _split_ident(text: str) -> list[str]:
     for chunk in re.split(r"[_:\-./\\]+", text):
         if not chunk:
             continue
-        for piece in _CAMEL_RE.findall(chunk):
+        pieces = _CAMEL_RE.findall(chunk)
+        for piece in pieces:
             lowered = piece.lower()
             if len(lowered) >= 3 and lowered not in _STOPWORDS:
                 parts.append(lowered)
+        if _has_short_camel_piece(chunk, pieces):
+            parts.append(chunk.lower())
     return parts
+
+
+def _has_short_camel_piece(chunk: str, pieces: list[str]) -> bool:
+    if len(pieces) < 2 or len(chunk) < 5 or not chunk.isalnum():
+        return False
+    return any(piece.isalpha() and len(piece) < 3 for piece in pieces)
 
 
 def _ends_with(parts: tuple[str, ...], tail: tuple[str, ...]) -> bool:
