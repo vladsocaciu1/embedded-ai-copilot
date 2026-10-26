@@ -269,6 +269,21 @@ uv run python scripts/eval_selection.py <STM32CubeF4 clone root> \
 
 Gate result (2026-10-20, code sha ca4607b, 4 CPUs): **GO**. Scope `Projects/STM32F4-Discovery` and `Projects/STM32F429I-Discovery`: 739 files, 4061 chunks, 2002 unique, embedded in 214.5 s (9.3 chunks/s), peak RSS 1,150,520 kB. Dev hybrid hit@5 8/12, MRR 0.60 (lexical 7/12, MRR 0.45). Held-out hybrid hit@5 6/8, MRR 0.33 (lexical 2/8, MRR 0.24). Structural hybrid 8/8, every hybrid rank 1. Checks: dev_hit5 8/12, dev_mrr 0.595870, heldout_hit5 hybrid 6 vs lexical 2, heldout_mrr hybrid 0.333117 vs lexical 0.236795, structural_pass 8/8, structural_ranks max hybrid-lexical 0. Held-out was run once, in this gate. Dev is the prototype's 8/12 and 0.60, and structural is 8/8.
 
+### Zephyr
+
+`scripts/fetch_zephyr_core.py` clones the Zephyr RTOS core only, pinned to v4.4.2 (`dccb09599635`), into `zephyr-core/`. It does not include `boards/`, `drivers/`, `dts/`, `soc/`, or `modules/`.
+
+`scripts/zephyr_check_slice.py` copies the manifest's files from `zephyr-core/` to `zephyr-core-check/`. The slice is about 930 unique chunks, and the script refuses more than 1,500.
+
+`scripts/zephyr_eval_cases.json` holds 8 structural questions. `scripts/zephyr_semantic_dev.json` holds 18 questions tagged code, asm, kconfig, doc, conf, and devicetree. `scripts/zephyr_semantic_heldout.json` holds 8 questions tagged code, cmake, doc, and kconfig. `zephyr_semantic_heldout.json` is run once per phase gate, never to tune.
+
+```bash
+uv run python scripts/fetch_zephyr_core.py
+uv run python scripts/zephyr_check_slice.py
+export EMBEDDING_CACHE_DIR=/tmp/s30-cache
+uv run python scripts/eval_selection.py zephyr-core-check scripts/zephyr_eval_cases.json scripts/zephyr_semantic_dev.json --ranker hybrid --scope . --max-chunks 1500 --json scripts/zephyr_baseline.json
+```
+
 ```bash
 uv run python scripts/chunk_stats.py <project_dir>
 ```

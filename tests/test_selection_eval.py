@@ -756,3 +756,41 @@ def test_h5_gate_block_and_gate_from(tmp_path, capsys):
         main(["--gate-from", str(structural_dev_json), str(structural_dev_json)])
     assert duplicate.value.code == 2
     assert "duplicate" in capsys.readouterr().err
+
+
+def test_e1_scope_dot_selects_every_chunk(tmp_path, capsys):
+    (tmp_path / "a.c").write_text("int a(void) { return 1; }\n", encoding="utf-8")
+    (tmp_path / "b.c").write_text("int b(void) { return 2; }\n", encoding="utf-8")
+    files = load_project_files(tmp_path, DEFAULT_EXCLUDE_DIRS)
+    index = build_index(files)
+    chunks = chunk_index(index, files)
+    assert select_scope(chunks, ["."]) == tuple(chunks)
+
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "question": "Where is a defined?",
+                    "expected": ["a.c"],
+                    "k": 1,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main(
+        [
+            str(tmp_path),
+            str(cases_path),
+            "--ranker",
+            "hybrid",
+            "--scope",
+            ".",
+            "--max-chunks",
+            "100",
+        ],
+        embedder=FakeEmbedder(),
+    )
+    out = capsys.readouterr().out
+    assert any(line.startswith("scope . files 2 chunks") for line in out.splitlines())

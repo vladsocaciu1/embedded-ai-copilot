@@ -1,0 +1,10 @@
+[
+{"question": "What does z_impl_k_sem_give do?", "expected": ["kernel/sem.c"], "k": 1, "tag": "structural"},
+{"question": "Explain kernel/mutex.c", "expected": ["kernel/mutex.c"], "k": 1, "tag": "structural"},
+{"question": "What does z_timer_expiration_handler do?", "expected": ["kernel/timer.c"], "k": 1, "tag": "structural"},
+{"question": "Where is adjust_owner_prio defined, and what calls it?", "expected": ["kernel/mutex.c"], "k": 1, "tag": "structural"},
+{"question": "What does _isr_wrapper do?", "expected": ["arch/arm/core/cortex_m/isr_wrapper.c"], "k": 1, "tag": "structural"},
+{"question": "Summarize samples/basic/blinky/src/main.c", "expected": ["samples/basic/blinky/src/main.c"], "k": 1, "tag": "structural"},
+{"question": "What does work_queue_main do?", "expected": ["kernel/work.c"], "k": 1, "tag": "structural"},
+{"question": "What does z_setup_new_thread initialize?", "expected": ["kernel/thread.c"], "k": 2, "tag": "structural"}
+]

@@ -53,3 +53,7 @@ Thumbs.db
 
 # Local firmware packs. Too large to vendor; point PROJECT_PATH here.
 /STM32CubeF4/
+
+# Local Zephyr clones. Too large to vendor.
+/zephyr-core/
+/zephyr-core-check/
