@@ -4,8 +4,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.config import DEFAULT_EXCLUDE_DIRS, DEFAULT_MAX_PROMPT_TOKENS, Settings
+from app.config import (
+    DEFAULT_EXCLUDE_DIRS,
+    DEFAULT_MAX_PROMPT_TOKENS,
+    EmbeddingSettings,
+    Settings,
+)
 from app.index_cache import IndexCache
+from app.semantic_service import SemanticService
 
 
 @pytest.fixture(autouse=True)
@@ -22,15 +28,16 @@ def ai_service(monkeypatch, tmp_path):
 
     app.ai_service calls load_settings() and genai.Client() at import time.
     The env vars have to be set before that import. Client() does not make a
-    network call.     The module stays in sys.modules; each test rebinds client,
-    settings, and index_cache so later tests still see a MagicMock,
-    this tmp_path, and a cold cache.
+    network call. The module stays in sys.modules; each test rebinds client,
+    settings, index_cache, and semantic_service so later tests still see a
+    MagicMock, this tmp_path, a cold cache, and semantic search off.
     """
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-DO-NOT-LOG")
     monkeypatch.setenv("GEMINI_MODEL", "test-model")
     monkeypatch.setenv("PROJECT_PATH", str(tmp_path))
     monkeypatch.setenv("EXCLUDE_DIRS", ",".join(DEFAULT_EXCLUDE_DIRS))
     monkeypatch.setenv("MAX_PROMPT_TOKENS", str(DEFAULT_MAX_PROMPT_TOKENS))
+    monkeypatch.setenv("SEMANTIC_SEARCH", "off")
     (tmp_path / "main.c").write_text("int answer = 42;\n", encoding="utf-8")
 
     # load_settings() calls load_dotenv on first import. Names already set
@@ -51,9 +58,15 @@ def ai_service(monkeypatch, tmp_path):
             project_path=tmp_path,
             gemini_api_key="test-key-DO-NOT-LOG",
             gemini_model="test-model",
+            embedding=EmbeddingSettings(semantic_search="off"),
         ),
     )
     monkeypatch.setattr(module, "index_cache", IndexCache())
+    monkeypatch.setattr(
+        module,
+        "semantic_service",
+        SemanticService(EmbeddingSettings(semantic_search="off")),
+    )
 
     from app import gemini_retry
 

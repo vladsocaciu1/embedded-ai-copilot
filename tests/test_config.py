@@ -522,7 +522,7 @@ def test_g1_embedding_settings_defaults(tmp_path, monkeypatch):
 
     # Assert
     assert embedding == config.EmbeddingSettings()
-    assert embedding.semantic_search == "off"
+    assert embedding.semantic_search == "local"
     assert embedding.model == config.DEFAULT_EMBEDDING_MODEL
     assert embedding.cache_dir == config.DEFAULT_EMBEDDING_CACHE_DIR
     assert settings.embedding == config.EmbeddingSettings()
@@ -544,7 +544,7 @@ def test_g2_semantic_search_parses(tmp_path, monkeypatch, caplog):
         record
         for record in caplog.records
         if record.message
-        == f"Semantic search local (model {DEFAULT_EMBEDDING_MODEL}); not used by /ask yet."
+        == f"Semantic search local (model {DEFAULT_EMBEDDING_MODEL}); used for partial context."
     ]
     assert len(logged) == 1
     assert logged[0].levelno == logging.INFO
@@ -559,10 +559,10 @@ def test_g2_semantic_search_parses(tmp_path, monkeypatch, caplog):
     assert not any("Semantic search" in record.message for record in caplog.records)
 
     monkeypatch.setenv("SEMANTIC_SEARCH", "   ")
-    assert load_embedding_settings().semantic_search == "off"
+    assert load_embedding_settings().semantic_search == "local"
 
     monkeypatch.delenv("SEMANTIC_SEARCH", raising=False)
-    assert load_embedding_settings().semantic_search == "off"
+    assert load_embedding_settings().semantic_search == "local"
 
 @pytest.mark.parametrize("raw", ["gemini", "on", "1"])
 def test_g2_invalid_semantic_search_raises_value_error(monkeypatch, caplog, raw):

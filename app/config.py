@@ -21,7 +21,7 @@ DEFAULT_EXCLUDE_DIRS = (
     "GenData",
 )
 DEFAULT_MAX_PROMPT_TOKENS = 200_000
-DEFAULT_SEMANTIC_SEARCH: Literal["off", "local"] = "off"
+DEFAULT_SEMANTIC_SEARCH: Literal["off", "local"] = "local"
 SEMANTIC_SEARCH_MODES = ("off", "local")
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDING_CACHE_DIR = BASE_DIR / ".cache"
@@ -29,7 +29,7 @@ DEFAULT_EMBEDDING_CACHE_DIR = BASE_DIR / ".cache"
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
-    semantic_search: Literal["off", "local"] = "off"
+    semantic_search: Literal["off", "local"] = DEFAULT_SEMANTIC_SEARCH
     model: str = DEFAULT_EMBEDDING_MODEL
     cache_dir: Path = DEFAULT_EMBEDDING_CACHE_DIR
 
@@ -163,7 +163,7 @@ def load_settings(project_path: Path | None = None) -> Settings:
     logger.info(f"Project path {project_path}.")
     if embedding.semantic_search == "local":
         logger.info(
-            f"Semantic search local (model {embedding.model}); not used by /ask yet."
+            f"Semantic search local (model {embedding.model}); used for partial context."
         )
 
     return Settings(

@@ -8,7 +8,11 @@ from typing import Protocol
 
 import numpy as np
 
-from app.config import DEFAULT_EMBEDDING_CACHE_DIR, DEFAULT_EMBEDDING_MODEL
+from app.config import (
+    DEFAULT_EMBEDDING_CACHE_DIR,
+    DEFAULT_EMBEDDING_MODEL,
+    EmbeddingSettings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,12 @@ class TextEmbedder(Protocol):
 
     def embed_query(self, text: str) -> np.ndarray:
         """Return one query vector."""
+
+
+def build_embedder(settings: EmbeddingSettings) -> TextEmbedder:
+    if settings.semantic_search == "off":
+        raise ValueError("semantic search is off")
+    return Embedder(settings.model, settings.cache_dir)
 
 
 def _text_embedding_class():
