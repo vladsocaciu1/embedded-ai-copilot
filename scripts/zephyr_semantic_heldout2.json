@@ -1,0 +1,10 @@
+[
+{"question": "How does k_timer_status_sync block until the timer has expired?", "expected": ["kernel/timer.c"], "k": 5, "tag": "syscall-name"},
+{"question": "How does k_thread_join wait for another thread to terminate, and what does it return on timeout?", "expected": ["kernel/sched.c"], "k": 5, "tag": "syscall-name"},
+{"question": "What does z_vrfy_k_msgq_get check about the user buffer before it calls the implementation?", "expected": ["kernel/msg_q.c"], "k": 5, "tag": "syscall-name"},
+{"question": "What does k_poll_signal_raise do to a thread that is waiting in k_poll?", "expected": ["kernel/poll.c"], "k": 5, "tag": "syscall-name"},
+{"question": "Where is CONFIG_SCHED_DEADLINE defined, and which scheduler code uses it?", "expected": ["kernel/Kconfig", "kernel/sched.c"], "k": 5, "tag": "CONFIG"},
+{"question": "What does CONFIG_THREAD_STACK_INFO add to a thread, and where is the option defined?", "expected": ["kernel/Kconfig", "kernel/thread.c"], "k": 5, "tag": "CONFIG"},
+{"question": "Where is CONFIG_SYSTEM_WORKQUEUE_PRIORITY defined, and which code uses it?", "expected": ["kernel/Kconfig", "kernel/system_work_q.c"], "k": 5, "tag": "CONFIG"},
+{"question": "Which sample enables CONFIG_SCHED_CPU_MASK in its prj.conf, and where is the option defined?", "expected": ["kernel/Kconfig", "samples/synchronization/prj.conf"], "k": 5, "tag": "CONFIG"}
+]
