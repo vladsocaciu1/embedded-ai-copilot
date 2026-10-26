@@ -297,6 +297,14 @@ Each line:
 
 On the measurement box (8 vCPU), STM32F4-Discovery was 298 parsed files, 1,673 chunks, 1,043 unique, about 55–80 s (about 13–18 chunks/s), peak RSS about 1.1 GB, and model files about 67 MB. The first run downloads about 67 MB into `.cache/models`. A later run loads that cache in about 0.5 s.
 
+Chunk embeddings are also stored on disk under `<EMBEDDING_CACHE_DIR>/vectors/<model>/`. The directory holds three files (`vectors.npy`, `keys.json`, `meta.json`), keyed by chunk hash, so a restart reuses every stored row and an edit embeds only the chunks whose text changed. Deleting it is safe (`rm -r .cache/vectors`); the next ensure rebuilds it. About 1.5 KB per chunk, about 1.6 MB for STM32F4-Discovery.
+
+```bash
+uv run python scripts/vector_check.py <STM32CubeF4 clone root>/Projects/STM32F4-Discovery --scope . --cache-dir /tmp/vec-check
+```
+
+`scripts/vector_check.py` embeds one scope into that index and prints ensure, lookup, size, and peak RSS. `/ask` does not read the index yet (spec 27).
+
 `SEMANTIC_SEARCH=local` is accepted and validated. It is not used by `/ask` yet.
 
 ## Graph update check
@@ -310,7 +318,7 @@ A path change with an uncommon name stays within `get` <= 1.0 s. Adding, removin
 
 Each module has one job. Domain data is a dataclass (`ProjectFile`, `Settings`). Pydantic validates the HTTP request (`AskRequest`). The loader, the prompt builder, and the Gemini client are called directly.
 
-Embeddings are being added behind SEMANTIC_SEARCH (default off); no vector database (numpy). Phase 3 adds a tree-sitter code index used for the project map. When the project does not fit the prompt budget, files are selected from names in the question and the index and graph, without embeddings, and sent whole. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
+Embeddings sit behind SEMANTIC_SEARCH (default off): a numpy matrix on disk keyed by chunk hash, with no vector database. Phase 3 adds a tree-sitter code index used for the project map. When the project does not fit the prompt budget, files are selected from names in the question and the index and graph, without embeddings, and sent whole. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
 
 ## Phase 3 summary
 
@@ -349,6 +357,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── project_loader.py
 │   ├── prompts.py
 │   ├── semantic_search.py
+│   ├── vector_index.py
 │   └── prompts/
 │       └── assistant.md
 ├── scripts/
@@ -358,7 +367,8 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── cube_semantic_heldout.json
 │   ├── embed_check.py
 │   ├── eval_selection.py
-│   └── graph_update_check.py
+│   ├── graph_update_check.py
+│   └── vector_check.py
 ├── sample_project/
 │   ├── inc/
 │   │   ├── app.h
@@ -387,7 +397,9 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── test_project_loader.py
 │   ├── test_prompts.py
 │   ├── test_selection_eval.py
-│   └── test_semantic_search.py
+│   ├── test_semantic_search.py
+│   ├── test_vector_check.py
+│   └── test_vector_index.py
 ├── .gitignore
 ├── LICENSE
 ├── pyproject.toml

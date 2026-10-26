@@ -22,6 +22,10 @@ class EmbedderUnavailableError(RuntimeError):
 class TextEmbedder(Protocol):
     """Anything with embed_documents and embed_query (Embedder or FakeEmbedder)."""
 
+    @property
+    def dims(self) -> int:
+        """Width of one embedding."""
+
     def embed_documents(self, texts: Sequence[str]) -> np.ndarray:
         """Return one row per text."""
 
