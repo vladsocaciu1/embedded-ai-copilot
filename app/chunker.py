@@ -26,6 +26,7 @@ CARD_SYMBOL_KINDS = (
 CARD_SYMBOL_LIMIT = 40
 LEAD_COMMENT_MAX_LINES = 25
 TAIL_PARTS = 4
+ASM_LEAD_BLANKS = 2
 
 _NOISE = re.compile(
     r"copyright|license|all rights reserved|as-is|@attention|@author|^[\s*/=\-]*$",
@@ -52,12 +53,18 @@ def _key(text: str) -> str:
     return hashlib.sha256((CHUNK_FORMAT + "\n" + text).encode("utf-8")).hexdigest()
 
 
-def _lead(lines: list[str], start_line: int) -> str:
+def _lead(lines: list[str], start_line: int, asm: bool = False) -> str:
     collected: list[str] = []
     index = start_line - 2
+    skip_blank = ASM_LEAD_BLANKS if asm else 0
+    while skip_blank > 0 and index >= 0 and not lines[index].strip():
+        index -= 1
+        skip_blank -= 1
     while index >= 0 and len(collected) < LEAD_COMMENT_MAX_LINES:
         stripped = lines[index].strip()
-        qualifies = stripped.startswith(("/*", "*", "//")) or stripped.endswith("*/")
+        qualifies = stripped.startswith(("/*", "*", "//"))
+        if not asm:
+            qualifies = qualifies or stripped.endswith("*/")
         if not qualifies:
             break
         collected.append(lines[index])
@@ -94,9 +101,11 @@ def _card(fs: FileSymbols, content: str) -> Chunk:
     )
 
 
-def _function_chunk(fs: FileSymbols, content: str, symbol: Symbol) -> Chunk:
+def _function_chunk(
+    fs: FileSymbols, content: str, symbol: Symbol, asm: bool = False
+) -> Chunk:
     lines = content.splitlines()
-    lead = _lead(lines, symbol.start_line)
+    lead = _lead(lines, symbol.start_line, asm)
     body = _body(lines, symbol.start_line, symbol.end_line)
     text = f"function {symbol.name} in {tail(fs.path)}\n{lead}\n{body}"
     return Chunk(
@@ -150,9 +159,21 @@ def _chunk_text_file(fs: FileSymbols, content: str, kind: str) -> tuple[Chunk, .
     return tuple(chunks)
 
 
+def _chunk_asm_file(fs: FileSymbols, content: str) -> tuple[Chunk, ...]:
+    chunks = [_card(fs, content)]
+    functions = [s for s in fs.symbols if s.kind is SymbolKind.FUNCTION]
+    for symbol in functions:
+        chunks.append(_function_chunk(fs, content, symbol, asm=True))
+    if not functions:
+        chunks.extend(_chunk_text_file(fs, content, "asm"))
+    return tuple(chunks)
+
+
 def chunk_file(fs: FileSymbols, content: str) -> tuple[Chunk, ...]:
     if fs.grammar is None:
         kind = text_kind(fs.path)
+        if kind == "asm":
+            return _chunk_asm_file(fs, content)
         return _chunk_text_file(fs, content, kind) if kind else ()
     chunks = [_card(fs, content)]
     for symbol in fs.symbols:

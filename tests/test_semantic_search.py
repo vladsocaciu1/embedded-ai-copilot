@@ -61,7 +61,7 @@ def test_s2_semantic_rank_uses_max_similarity_and_path_ties():
         ProjectFile(weak, weak_body),
         ProjectFile(Path("a/tie.c"), tie),
         ProjectFile(Path("b/tie.c"), tie),
-        ProjectFile(Path("notes.s"), "button debounce handler press\n"),
+        ProjectFile(Path("notes.ld"), "button debounce handler press\n"),
         ProjectFile(Path("quartz.c"), "void quartz_crystal(void)\n{\n    return;\n}\n"),
     ]
     chunks = _chunks(files)
@@ -72,7 +72,7 @@ def test_s2_semantic_rank_uses_max_similarity_and_path_ties():
     scores = semantic_scores(question, embedded, fake)
 
     assert ranked[0] == strong
-    assert Path("notes.s") not in ranked
+    assert Path("notes.ld") not in ranked
     assert set(ranked) == {chunk.path for chunk in chunks}
     assert scores[strong] > scores[weak]
     assert _mean(strong, embedded, fake, question) < _mean(weak, embedded, fake, question)

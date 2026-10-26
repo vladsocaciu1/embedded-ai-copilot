@@ -450,7 +450,7 @@ def test_m8_start_build(tmp_path):
     assert running.wait_idle(timeout=5) is True
 
     # Arrange / Act / Assert: no chunks means no thread and status off
-    empty_files = [_source("startup.s", "nop\n")]
+    empty_files = [_source("startup.ld", "nop\n")]
     empty_index = _load(empty_files)
     assert chunk_index(empty_index, empty_files) == ()
     before = list(_build_threads())

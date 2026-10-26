@@ -218,7 +218,7 @@ def test_c7_tail_keeps_last_four_or_whole_path():
 
 
 def test_c8_unparsed_empty_and_header_card_only():
-    assert _chunks("startup.s", "nop\n") == ()
+    assert _chunks("startup.ld", "nop\n") == ()
     assert _chunks("link.ld", "SECTIONS {}\n") == ()
 
     header = _chunks("inc/a.h", "void g(void);\nint x;\n")
@@ -336,7 +336,7 @@ def test_c14_chunk_stats_lines_and_usage(tmp_path, capsys):
         encoding="utf-8",
     )
     (source / "b.h").write_text("void g(void);\n", encoding="utf-8")
-    (source / "c.s").write_text("nop\n", encoding="utf-8")
+    (source / "c.ld").write_text("nop\n", encoding="utf-8")
 
     main([str(tmp_path)])
     lines = capsys.readouterr().out.splitlines()
@@ -447,7 +447,7 @@ def _baseline_c_sources() -> list[ProjectFile]:
 
     add("a/b/c/d/e/f.c", "void f(void) {}\n")
     add("src/a.c", "void f(void) {}\n")
-    add("startup.s", "nop\n")
+    add("startup.ld", "nop\n")
     add("link.ld", "SECTIONS {}\n")
     add("inc/a.h", "void g(void);\nint x;\n")
 
@@ -477,7 +477,7 @@ def _baseline_c_sources() -> list[ProjectFile]:
 
     add("src/a.c", "void f(void) { return; }\n")
     add("src/b.h", "void g(void);\n")
-    add("src/c.s", "nop\n")
+    add("src/c.ld", "nop\n")
     return files
 
 
@@ -621,14 +621,14 @@ def test_h7_mixed_project_keys_are_unique_and_assembly_is_skipped():
         ProjectFile(path=Path("Kconfig"), content="config FOO\n\tbool\n"),
         ProjectFile(path=Path("doc.rst"), content="Title\n=====\n\nbody\n"),
         ProjectFile(path=Path("CMakeLists.txt"), content="project(app)\n"),
-        ProjectFile(path=Path("startup.S"), content="nop\n"),
+        ProjectFile(path=Path("startup.ld"), content="nop\n"),
     ]
     chunks = chunk_index(build_index(files), files)
 
     assert len({chunk.key for chunk in chunks}) == len(chunks)
     assert len(unique_texts(chunks)) == len(chunks)
-    assert all(chunk.path.name != "startup.S" for chunk in chunks)
-    assert _chunks("startup.S", "nop\n") == ()
+    assert all(chunk.path.name != "startup.ld" for chunk in chunks)
+    assert _chunks("startup.ld", "nop\n") == ()
 
 
 def test_s1_other_kinds_line_for_text_chunks_only(tmp_path, capsys):
