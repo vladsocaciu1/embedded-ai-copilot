@@ -41,6 +41,7 @@ def stub_dotenv_and_clear_env(monkeypatch, request):
     monkeypatch.delenv("EXCLUDE_DIRS", raising=False)
     monkeypatch.delenv("MAX_PROMPT_TOKENS", raising=False)
     monkeypatch.delenv("SEMANTIC_SEARCH", raising=False)
+    monkeypatch.delenv("LEARNING_MODE", raising=False)
     monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
     monkeypatch.delenv("EMBEDDING_CACHE_DIR", raising=False)
 

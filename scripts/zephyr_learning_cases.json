@@ -1,0 +1,37 @@
+[
+  {
+    "id": 1,
+    "question": "What is a mutex in Zephyr, and how does k_mutex_lock work?",
+    "files": ["kernel/mutex.c"],
+    "symbols": ["k_mutex_lock"],
+    "docs": ["doc/kernel/services/synchronization/mutexes.rst"]
+  },
+  {
+    "id": 2,
+    "question": "How do semaphores work in Zephyr, and what happens when k_sem_take times out?",
+    "files": ["kernel/sem.c"],
+    "symbols": ["k_sem_take"],
+    "docs": ["doc/kernel/services/synchronization/semaphores.rst"]
+  },
+  {
+    "id": 3,
+    "question": "What is the system workqueue for, and how do I submit work to it from an ISR?",
+    "files": ["kernel/work.c", "kernel/system_work_q.c"],
+    "symbols": ["k_work_submit", "k_work_queue"],
+    "docs": ["doc/kernel/services/threads/workqueue.rst"]
+  },
+  {
+    "id": 4,
+    "question": "How do condition variables work in Zephyr, and what does k_condvar_wait do with the mutex?",
+    "files": ["kernel/condvar.c"],
+    "symbols": ["k_condvar_wait"],
+    "docs": ["doc/kernel/services/synchronization/condvar.rst"]
+  },
+  {
+    "id": 5,
+    "question": "How does a context switch happen on Cortex-M in Zephyr?",
+    "files": ["arch/arm/core/cortex_m/swap_helper.S"],
+    "symbols": ["z_arm_pendsv", "PendSV"],
+    "docs": []
+  }
+]

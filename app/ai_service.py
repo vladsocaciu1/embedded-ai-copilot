@@ -19,6 +19,7 @@ from app.models import Answer, AnswerContext, PreparedPrompt, ProjectFile, Proje
 from app.project_loader import load_project_files
 from app.prompts import (
     assistant_prompt,
+    learning_instructions,
     build_assistant_prompt,
     build_focused_map,
     build_partial_prompt,
@@ -145,19 +146,24 @@ def _prepare(
     logger.info(f"Loaded {len(project_files)} project files from {project_path}")
 
     limit = settings.max_prompt_tokens
+    learning = settings.learning_mode
+    instructions = learning_instructions if learning else assistant_prompt
     cap = int(limit * MAP_BUDGET_SHARE * MAP_CHARS_PER_TOKEN)
     total_chars = sum(len(project_file.content) for project_file in project_files)
     index, graph = index_cache.get(settings.project_path, project_files)
     files_total = len(project_files)
 
     if total_chars <= limit * MAX_CHARS_PER_TOKEN:
-        base_prompt = build_assistant_prompt(project_files, question)
+        base_prompt = build_assistant_prompt(
+            project_files, question, instructions=instructions
+        )
         project_map = build_project_map(index, graph, max_chars=cap)
         logger.info(
             f"Project map: tier {project_map.tier}, {len(project_map.text)} chars (cap {cap})."
         )
         prompt = build_assistant_prompt(
-            project_files, question, project_map=project_map.text
+            project_files, question, project_map=project_map.text,
+            instructions=instructions,
         )
         count = counter(prompt)
         map_tier: str | None = project_map.tier
@@ -181,6 +187,7 @@ def _prepare(
                 map_files=map_files,
                 ranked=(),
                 semantic="off" if semantic_service.enabled else None,
+                learning=learning,
             )
         logger.info(
             f"Full prompt is {count} tokens (limit {limit}); using partial context."
@@ -201,7 +208,7 @@ def _prepare(
     budget = (
         int(limit * MAP_CHARS_PER_TOKEN)
         - cap
-        - len(assistant_prompt)
+        - len(instructions)
         - len(question)
         - PARTIAL_RESERVE_CHARS
     )
@@ -212,7 +219,7 @@ def _prepare(
         first = ranked_paths[0]
         block = _block(first, files_by_path[first].content)
         estimated = (
-            len(assistant_prompt) + len(question) + cap + block
+            len(instructions) + len(question) + cap + block
         ) // MAX_CHARS_PER_TOKEN
         logger.warning(
             f"Prompt is at least {estimated} tokens (estimated, limit {limit}); "
@@ -221,7 +228,8 @@ def _prepare(
         raise ProjectTooLargeError(estimated, limit, estimated=True)
 
     project_map, prompt = _build_partial(
-        question, project_files, index, graph, ranked_paths, included, limit, cap
+        question, project_files, index, graph, ranked_paths, included, limit, cap,
+        instructions,
     )
     count = counter(prompt)
     if count > limit:
@@ -238,7 +246,8 @@ def _prepare(
             logger.warning(f"Prompt is {count} tokens (limit {limit}).")
             raise ProjectTooLargeError(count, limit)
         project_map, prompt = _build_partial(
-            question, project_files, index, graph, ranked_paths, included, limit, cap
+            question, project_files, index, graph, ranked_paths, included, limit, cap,
+            instructions,
         )
         count = counter(prompt)
         if count > limit:
@@ -264,6 +273,7 @@ def _prepare(
         map_files=project_map.file_count,
         ranked=ranked,
         semantic=semantic.status,
+        learning=learning,
     )
 
 
@@ -350,10 +360,11 @@ def _build_partial(
     included: tuple[Path, ...],
     limit: int,
     cap: int,
+    instructions: str,
 ):
     project_map = build_focused_map(index, graph, ranked, included, cap)
     prompt = build_partial_prompt(
-        project_files, included, question, project_map.text, limit
+        project_files, included, question, project_map.text, limit, instructions
     )
     return project_map, prompt
 

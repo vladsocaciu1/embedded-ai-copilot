@@ -135,6 +135,7 @@ class PreparedPrompt:
     map_files: int  # 0 when full mode dropped the map
     ranked: tuple[RankedFile, ...]  # () in full mode
     semantic: Literal["off", "building", "ready"] | None = None
+    learning: bool = False
 
 
 @dataclass(frozen=True)

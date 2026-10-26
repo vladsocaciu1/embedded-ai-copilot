@@ -12,6 +12,13 @@ assistant_prompt_path = Path(__file__).resolve().parent / "prompts" / "assistant
 with assistant_prompt_path.open('r', encoding='utf-8') as f:
     assistant_prompt = f.read()
 
+learning_prompt_path = Path(__file__).resolve().parent / "prompts" / "learning.md"
+
+with learning_prompt_path.open('r', encoding='utf-8') as f:
+    learning_prompt = f.read()
+
+learning_instructions = f"{assistant_prompt}\n\n{learning_prompt}"
+
 _TYPE_KINDS = frozenset({
     SymbolKind.TYPEDEF,
     SymbolKind.STRUCT,
@@ -67,6 +74,7 @@ def build_partial_prompt(
     question: str,
     project_map: str,
     limit: int,
+    instructions: str | None = None,
 ) -> str:
     by_path = {project_file.path: project_file for project_file in project_files}
     included_files = [by_path[path] for path in included]
@@ -81,7 +89,7 @@ def build_partial_prompt(
         "not included; say so when the answer depends on them."
     )
     parts = [
-        assistant_prompt,
+        assistant_prompt if instructions is None else instructions,
         project_map,
         notice,
         _format_project_context(included_files),
@@ -104,6 +112,7 @@ def build_assistant_prompt(
     project_files: list[ProjectFile],
     question: str,
     project_map: str | None = None,
+    instructions: str | None = None,
 ) -> str:
     """
     Build a prompt that includes the assistant prompt, context, and the user's question.
@@ -112,6 +121,7 @@ def build_assistant_prompt(
         project_files (list[ProjectFile]): A list of ProjectFile objects containing the path and content of each file.
         question (str): The user's question.
         project_map: Map text placed after the instructions. None or "" leaves the prompt unchanged.
+        instructions: Text placed first. None means assistant_prompt.
 
     Returns:
         str: The complete prompt to send to the AI model.
@@ -119,7 +129,7 @@ def build_assistant_prompt(
 
     header = _format_project_header(project_files)
     project_files_text = _format_project_context(project_files)
-    parts = [assistant_prompt]
+    parts = [assistant_prompt if instructions is None else instructions]
     if project_map:
         parts.append(project_map)
     parts.append(header)

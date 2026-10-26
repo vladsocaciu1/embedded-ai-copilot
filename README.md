@@ -33,7 +33,7 @@ flowchart LR
 - `app/index_cache.py` keeps the last project's index and graph in memory. A file is re-parsed only when its path or content (SHA-256) changes, and the graph is updated incrementally for content edits and for added, removed or renamed files (up to max(200, 2%) changed files and 5,000 includes to re-resolve), and rebuilt otherwise. It does not read the disk or call Gemini.
 - `app/project_loader.py` reads the filesystem and applies the selection rules (extensions, hidden and build directories, directory-name excludes, and the size cap). It returns files sorted, with paths relative to the project root. It does not build prompts or call Gemini.
 - `app/prompts.py` builds the prompt from `app/prompts/assistant.md`, the file text, and the question. Full mode adds a project map (capped at 20% of the budget, compacted in fixed tiers) before the files and a file/line count header. Partial mode adds a focused map and a partial-context notice, then the selected files in rank order. It does not load the tree or call Gemini.
-- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, `SEMANTIC_SEARCH`, `EMBEDDING_MODEL`, `EMBEDDING_CACHE_DIR`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
+- `app/config.py` loads `.env` and checks `GEMINI_API_KEY`, `GEMINI_MODEL`, `EXCLUDE_DIRS`, `MAX_PROMPT_TOKENS`, `SEMANTIC_SEARCH`, `EMBEDDING_MODEL`, `EMBEDDING_CACHE_DIR`, `LEARNING_MODE`, and that the project directory exists and is a directory. It returns a frozen `Settings` dataclass. It does not call Gemini.
 - `app/models.py` holds the `ProjectFile` dataclass, the index dataclasses (`SymbolKind`, `Symbol`, `Include`, `Call`, `FileSymbols`, `ProjectIndex`, `SymbolRef`, `CallRef`, `ResolvedInclude`, `ProjectMap`), `Chunk`, `RankedFile`, `PreparedPrompt`, and `Answer` / `AnswerContext`. The HTTP body is `AskRequest` in `main.py`.
 - `app/code_index.py` parses each loaded C/C++ file with tree-sitter and records its functions, prototypes, macros, types, file-scope variables and includes with line numbers and the names each function calls (C++: classes, namespaces, qualified names). Headers use the C++ grammar. Parse errors are tolerated. It is used by `/ask` for the project map. It does not read the disk or call Gemini.
 - `app/chunker.py` builds retrieval chunks (file cards and function chunks) from the tree-sitter index; doesn't embed, store or rank.
@@ -72,6 +72,8 @@ GEMINI_MODEL=your-model
 # EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 # Optional: models and vectors; default .cache/ in the repo.
 # EMBEDDING_CACHE_DIR=.cache
+# Optional: learning-style answers (default off). `on` adds the rules in app/prompts/learning.md.
+# LEARNING_MODE=off
 ```
 
 Startup fails if either value is missing or empty (`RuntimeError: GEMINI_API_KEY is not set.` or `RuntimeError: GEMINI_MODEL is not set.`).
@@ -87,6 +89,19 @@ Prompt order in full mode: instructions, project map, file/line count header, fi
 Each answer calls Gemini's free `count_tokens` before `generate_content`. Routing uses the total source characters. At most 10 characters per allowed token, the request stays in full mode: the project map, every file, and one count. If that count is over the limit, the map is dropped and the tokens are counted again. If both full counts are over, or the source is already over the character limit, the request uses partial context instead of returning 413. The character limit does not skip the index: the cache is read on every request, and a background thread warms it at startup.
 
 Partial context ranks files from names in the question and the index and graph. When semantic search is enabled and its index is ready, that order is fused with the semantic ranking; until then the ranking stays lexical. Whole files are then packed into the remaining character budget. See Semantic search. The prompt includes a partial-context notice. The answer text ends with a fixed footer stating how many of the project files fit the token budget and that the included files are listed in context.files_included. One exact count follows. If it is still over, the lowest-ranked included files are dropped once and the prompt is counted again. 413 is returned only when not even one selected file fits (an estimated count, with no `count_tokens` call) or when the partial prompt is still over the limit after that shrink. A request counts tokens at most four times. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. The index and graph stay cached between requests and refresh from the loaded files, so code edits are picked up without a restart.
+
+## Learning mode
+
+`LEARNING_MODE=on` appends `app/prompts/learning.md` to the instructions, in full and partial mode. The answer then has a fixed shape: a short answer, where it lives (file and symbol with `path:line`), how it works, the documentation page if one is in the prompt, and two or three things to read next, each a file from the prompt. RTOS terms are explained on first use. Default is `off`: the prompt is byte-for-byte what it was. The map, the partial-context notice and the footer do not change, and file paths still appear only in `context.files_included`. The partial budget subtracts the length of the active instructions. `POST /context` adds `"learning": true` when the mode is on and omits it otherwise; `/ask` does not change shape. Nothing about ranking changes.
+
+Check it with a real key on the Zephyr check slice (`uv run python scripts/zephyr_check_slice.py`), with the server running with `MAX_PROMPT_TOKENS=60000`:
+
+```bash
+uv run python scripts/learning_check.py run --out /tmp/learning-on.json
+uv run python scripts/learning_check.py check /tmp/learning-on.json --root <slice> --human yes,yes,yes,yes,yes
+```
+
+`run` asks the five questions in `scripts/zephyr_learning_cases.json`. `check` scores the saved answers with the rubric in the script header: A names the file and symbol, B links the documentation page, C suggests next reading, D (your judgment) explains the purpose. It passes at 4 of 5 questions.
 
 ## Run
 
@@ -227,7 +242,7 @@ Retrying `generate_content` after a 5xx can bill twice if the server actually fi
 uv run pytest
 ```
 
-The tests run offline. Gemini is mocked.
+The tests run offline. Gemini is mocked. The learning-mode tests assert prompt text; no test asserts answer quality.
 
 ## Selection eval
 
