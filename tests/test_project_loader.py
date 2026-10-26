@@ -469,18 +469,20 @@ def test_load_project_files_decodes_cp1252_apostrophe(tmp_path):
     assert len(project_files) == 1
     assert project_files[0].content == "// it\u2019s\nint x;\n"
 
-def test_load_project_files_warns_on_cp1252_fallback(tmp_path, caplog):
+def test_load_project_files_logs_info_summary_on_cp1252_fallback(tmp_path, caplog):
 
     # Arrange
     (tmp_path / "note.c").write_bytes(b"// it\x92s\nint x;\n")
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.INFO)
 
     # Act
     load_project_files(tmp_path)
 
     # Assert
     assert any(
-        record.levelno == logging.WARNING and "note.c" in record.getMessage()
+        record.name == "app.project_loader"
+        and record.levelno == logging.INFO
+        and "note.c" in record.getMessage()
         for record in caplog.records
     )
 
@@ -507,3 +509,243 @@ def test_load_project_files_utf8_logs_no_warning(tmp_path, caplog):
 
     # Assert
     assert not any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+_CP1252_BYTES = b"// it\x92s\nint x;\n"
+_CP1252_TEXT = "// it\u2019s\nint x;\n"
+_UNDECODABLE_BYTES = b"\x81\x8d\x8f\x90\x9d"
+
+
+def _loader_records(caplog):
+    return [record for record in caplog.records if record.name == "app.project_loader"]
+
+
+def _write_cp1252(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_CP1252_BYTES)
+
+
+def _write_mixed_project(root: Path) -> None:
+    for name in ("a.c", "b.c", "c.c", "d.c", "e.c"):
+        _write_cp1252(root / name)
+    (root / "big.c").write_bytes(b"b" * (MAX_FILE_BYTES + 1))
+    (root / "bad.c").write_bytes(_UNDECODABLE_BYTES)
+    (root / "ok.c").write_text("int ok;\n", encoding="utf-8")
+
+
+def _enable_loader_debug(caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="app.project_loader")
+
+
+def test_load_project_files_logs_one_summary_per_category(tmp_path, caplog):
+
+    # Arrange
+    _write_mixed_project(tmp_path)
+    _enable_loader_debug(caplog)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    high = [
+        record
+        for record in _loader_records(caplog)
+        if record.levelno >= logging.INFO
+    ]
+    assert [(record.levelno, record.getMessage()) for record in high] == [
+        (
+            logging.INFO,
+            "Decoded 5 files as cp1252 (not valid UTF-8); "
+            "e.g. a.c, b.c, c.c, and 2 more. "
+            "Per-file list: DEBUG, logs/app.log.",
+        ),
+        (
+            logging.WARNING,
+            "Skipped 1 file over the 512 KiB size cap; "
+            "e.g. big.c. Per-file list: DEBUG, logs/app.log.",
+        ),
+        (
+            logging.WARNING,
+            "Skipped 1 file that are neither UTF-8 nor cp1252; "
+            "e.g. bad.c. Per-file list: DEBUG, logs/app.log.",
+        ),
+    ]
+    assert all(str(tmp_path) not in record.getMessage() for record in _loader_records(caplog))
+
+
+def test_load_project_files_logs_per_file_lines_at_debug(tmp_path, caplog):
+
+    # Arrange
+    _write_mixed_project(tmp_path)
+    _enable_loader_debug(caplog)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    records = _loader_records(caplog)
+    debug = [record.getMessage() for record in records if record.levelno == logging.DEBUG]
+    assert debug.count("Decoded a.c as cp1252 (not valid UTF-8).") == 1
+    assert debug.count("Decoded b.c as cp1252 (not valid UTF-8).") == 1
+    assert debug.count("Decoded c.c as cp1252 (not valid UTF-8).") == 1
+    assert debug.count("Decoded d.c as cp1252 (not valid UTF-8).") == 1
+    assert debug.count("Decoded e.c as cp1252 (not valid UTF-8).") == 1
+    assert (
+        f"Skipping file over size cap: big.c ({MAX_FILE_BYTES + 1} bytes)" in debug
+    )
+    assert "Skipping file that is neither UTF-8 nor cp1252: bad.c" in debug
+    assert len(debug) == 7
+    for record in records:
+        if record.levelno < logging.INFO:
+            continue
+        message = record.getMessage()
+        assert not message.startswith("Skipping file")
+        assert "; e.g. " in message
+
+
+def test_load_project_files_clean_utf8_logs_no_loader_record(tmp_path, caplog):
+
+    # Arrange
+    (tmp_path / "main.c").write_text("int x;\n", encoding="utf-8")
+    _enable_loader_debug(caplog)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    assert _loader_records(caplog) == []
+
+
+def test_load_project_files_summary_singular_plural_and_more(tmp_path, caplog):
+
+    # Arrange
+    _enable_loader_debug(caplog)
+
+    def summary_for(names: list[str]) -> str:
+        root = tmp_path / f"n{len(names)}"
+        root.mkdir()
+        for name in names:
+            _write_cp1252(root / name)
+        caplog.clear()
+        load_project_files(root)
+        high = [
+            record
+            for record in _loader_records(caplog)
+            if record.levelno >= logging.INFO
+        ]
+        assert len(high) == 1
+        return high[0].getMessage()
+
+    # Act
+    one = summary_for(["a.c"])
+    three = summary_for(["a.c", "b.c", "c.c"])
+    four = summary_for(["a.c", "b.c", "c.c", "d.c"])
+
+    # Assert
+    assert one == (
+        "Decoded 1 file as cp1252 (not valid UTF-8); e.g. a.c. "
+        "Per-file list: DEBUG, logs/app.log."
+    )
+    assert "and " not in one
+    assert "more" not in one
+    assert three == (
+        "Decoded 3 files as cp1252 (not valid UTF-8); "
+        "e.g. a.c, b.c, c.c. Per-file list: DEBUG, logs/app.log."
+    )
+    assert "more" not in three
+    assert four == (
+        "Decoded 4 files as cp1252 (not valid UTF-8); "
+        "e.g. a.c, b.c, c.c, and 1 more. Per-file list: DEBUG, logs/app.log."
+    )
+
+
+def test_load_project_files_summary_examples_sorted_posix(tmp_path, caplog, monkeypatch):
+
+    # Arrange
+    for name in (
+        "src-x/b.c",
+        "src/z.c",
+        "src/a.c",
+        "Examples/I2C/Src/main.c",
+    ):
+        _write_cp1252(tmp_path / name)
+
+    def walk_unsorted(self, top_down=True, on_error=None, follow_symlinks=False):
+        yield self, ["src-x", "src", "Examples"], []
+        yield self / "src-x", [], ["b.c"]
+        yield self / "src", [], ["z.c", "a.c"]
+        yield self / "Examples", ["I2C"], []
+        yield self / "Examples" / "I2C", ["Src"], []
+        yield self / "Examples" / "I2C" / "Src", [], ["main.c"]
+
+    monkeypatch.setattr(Path, "walk", walk_unsorted)
+    _enable_loader_debug(caplog)
+
+    # Act
+    load_project_files(tmp_path)
+
+    # Assert
+    high = [
+        record
+        for record in _loader_records(caplog)
+        if record.levelno >= logging.INFO
+    ]
+    assert len(high) == 1
+    assert high[0].getMessage() == (
+        "Decoded 4 files as cp1252 (not valid UTF-8); "
+        "e.g. Examples/I2C/Src/main.c, src/a.c, src/z.c, and 1 more. "
+        "Per-file list: DEBUG, logs/app.log."
+    )
+
+
+def test_load_project_files_logging_does_not_change_loaded_files(tmp_path, caplog):
+
+    # Arrange
+    _write_mixed_project(tmp_path)
+    _enable_loader_debug(caplog)
+    expected = [
+        (Path("a.c"), _CP1252_TEXT),
+        (Path("b.c"), _CP1252_TEXT),
+        (Path("c.c"), _CP1252_TEXT),
+        (Path("d.c"), _CP1252_TEXT),
+        (Path("e.c"), _CP1252_TEXT),
+        (Path("ok.c"), "int ok;\n"),
+    ]
+
+    def summaries():
+        return [
+            (record.levelno, record.getMessage())
+            for record in _loader_records(caplog)
+            if record.levelno >= logging.INFO
+        ]
+
+    # Act
+    first = load_project_files(tmp_path)
+    first_summaries = summaries()
+    caplog.clear()
+    second = load_project_files(tmp_path)
+
+    # Assert
+    assert [(item.path, item.content) for item in first] == expected
+    assert [(item.path, item.content) for item in second] == expected
+    assert summaries() == first_summaries
+    assert len(first_summaries) == 3
+
+
+def test_load_project_files_invalid_path_logs_error_without_summary(tmp_path, caplog):
+
+    # Arrange
+    missing_path = tmp_path / "does_not_exist"
+    file_path = tmp_path / "main.c"
+    file_path.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    _enable_loader_debug(caplog)
+
+    # Act / Assert
+    for invalid in (missing_path, file_path):
+        caplog.clear()
+        with pytest.raises(ValueError, match="Invalid project path:"):
+            load_project_files(invalid)
+        records = _loader_records(caplog)
+        assert len(records) == 1
+        assert records[0].levelno == logging.ERROR
+        assert records[0].getMessage() == f"Invalid project path: {invalid}"
