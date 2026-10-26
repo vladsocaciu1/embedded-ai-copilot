@@ -1,0 +1,10 @@
+[
+{"question": "How does a thread wait until a combination of event bits is set, and what happens to the events that matched?", "expected": ["kernel/events.c"], "k": 5, "tag": "code"},
+{"question": "How does a thread take an item from a queue, and how does appending an item wake a waiting thread?", "expected": ["kernel/queue.c"], "k": 5, "tag": "code"},
+{"question": "What does the kernel do at boot before main runs, and in which order are the initialization levels run?", "expected": ["kernel/init.c"], "k": 5, "tag": "code"},
+{"question": "How does the kernel spin for a number of microseconds without sleeping?", "expected": ["kernel/busy_wait.c"], "k": 5, "tag": "code"},
+{"question": "How does a spinlock disable interrupts, and how does it differ between single-core and SMP builds?", "expected": ["include/zephyr/spinlock.h"], "k": 5, "tag": "code"},
+{"question": "Which CMake file lists the kernel source files, and which of them are only added when userspace is enabled?", "expected": ["kernel/CMakeLists.txt"], "k": 5, "tag": "cmake"},
+{"question": "What are the count and the limit of a counting semaphore according to the documentation?", "expected": ["doc/kernel/services/synchronization/semaphores.rst"], "k": 5, "tag": "doc"},
+{"question": "How do I turn on stack canaries, and how do I choose between the strong and the all-functions variants?", "expected": ["kernel/Kconfig"], "k": 5, "tag": "kconfig"}
+]

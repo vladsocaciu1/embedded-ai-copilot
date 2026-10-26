@@ -1,0 +1,34 @@
+# Zephyr check slice: the files `scripts/zephyr_check_slice.py` copies from
+# zephyr-core/ to zephyr-core-check/. One glob per line, relative to the
+# zephyr-core root; ** spans directories, * stays inside one. A line starting
+# with ! removes matches of the earlier lines.
+kernel/*
+kernel/include/*.h
+arch/arm/core/cortex_m/*
+include/zephyr/kernel.h
+include/zephyr/kernel_structs.h
+include/zephyr/irq.h
+include/zephyr/spinlock.h
+samples/basic/blinky/**
+samples/basic/threads/**
+samples/synchronization/**
+samples/philosophers/**
+doc/kernel/services/synchronization/*
+doc/kernel/services/threads/index.rst
+doc/kernel/services/threads/workqueue.rst
+subsys/logging/Kconfig.mode
+subsys/logging/Kconfig.processing
+!kernel/mmu.c
+!kernel/userspace.c
+!kernel/userspace_handler.c
+!kernel/obj_core.c
+!kernel/usage.c
+!kernel/mem_domain.c
+!kernel/Kconfig.vm
+!kernel/Kconfig.obj_core
+!kernel/Kconfig.mem_domain
+!kernel/Kconfig.device
+!kernel/include/mmu.h
+!arch/arm/core/cortex_m/Kconfig
+!arch/arm/core/cortex_m/cmse/**
+!arch/arm/core/cortex_m/tz/**
