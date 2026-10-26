@@ -56,6 +56,9 @@ def load_project_files(
         raise ValueError(f"Invalid project path: {project_path}")
 
     project_files = []
+    cp1252_paths: list[Path] = []
+    oversize_paths: list[Path] = []
+    undecodable_paths: list[Path] = []
     for dirpath, dirnames, filenames in project_path.walk(
         top_down=True, follow_symlinks=False
     ):
@@ -66,9 +69,14 @@ def load_project_files(
             file = dirpath / filename
             if file.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
+            relative = file.relative_to(project_path)
+            relative_posix = relative.as_posix()
             size = file.stat().st_size
             if size > MAX_FILE_BYTES:
-                logger.warning(f"Skipping file over size cap: {file} ({size} bytes)")
+                logger.debug(
+                    f"Skipping file over size cap: {relative_posix} ({size} bytes)"
+                )
+                oversize_paths.append(relative)
                 continue
             try:
                 with file.open("r", encoding="utf-8-sig") as f:
@@ -78,15 +86,63 @@ def load_project_files(
                     with file.open("r", encoding="cp1252") as f:
                         content = f.read()
                 except UnicodeDecodeError:
-                    logger.warning(
-                        f"Skipping file that is neither UTF-8 nor cp1252: {file}"
+                    logger.debug(
+                        "Skipping file that is neither UTF-8 nor cp1252: "
+                        f"{relative_posix}"
                     )
+                    undecodable_paths.append(relative)
                     continue
-                logger.warning(f"Decoded {file} as cp1252 (not valid UTF-8).")
+                logger.debug(
+                    f"Decoded {relative_posix} as cp1252 (not valid UTF-8)."
+                )
+                cp1252_paths.append(relative)
 
-            project_files.append(
-                ProjectFile(path=file.relative_to(project_path), content=content)
-            )
+            project_files.append(ProjectFile(path=relative, content=content))
 
     project_files.sort(key=lambda f: f.path.parts)
+    _log_summary(
+        logging.INFO,
+        (
+            "Decoded {n} {files} as cp1252 (not valid UTF-8); "
+            "e.g. {examples}. Per-file list: DEBUG, logs/app.log."
+        ),
+        cp1252_paths,
+    )
+    _log_summary(
+        logging.WARNING,
+        (
+            "Skipped {n} {files} over the {kib} KiB size cap; "
+            "e.g. {examples}. Per-file list: DEBUG, logs/app.log."
+        ),
+        oversize_paths,
+    )
+    _log_summary(
+        logging.WARNING,
+        (
+            "Skipped {n} {files} that are neither UTF-8 nor cp1252; "
+            "e.g. {examples}. Per-file list: DEBUG, logs/app.log."
+        ),
+        undecodable_paths,
+    )
     return project_files
+
+
+def _log_summary(level: int, template: str, paths: list[Path]) -> None:
+    count = len(paths)
+    if count == 0:
+        return
+    files = "file" if count == 1 else "files"
+    ordered = sorted(paths, key=lambda path: path.parts)
+    examples = ", ".join(path.as_posix() for path in ordered[:3])
+    extra = count - 3
+    if extra > 0:
+        examples = f"{examples}, and {extra} more"
+    logger.log(
+        level,
+        template.format(
+            n=count,
+            files=files,
+            examples=examples,
+            kib=MAX_FILE_BYTES // 1024,
+        ),
+    )

@@ -32,8 +32,15 @@ def setup_logging(level=logging.INFO):
                 "maxBytes": 10 * 1024 * 1024,  # 10 MB
                 "backupCount": 5,
                 "formatter": "standard",
-                "level": level,
+                "level": logging.DEBUG,
                 "encoding": "utf-8",
+            },
+        },
+
+        "loggers": {
+            "app": {
+                "level": logging.DEBUG,
+                "propagate": True,
             },
         },
 

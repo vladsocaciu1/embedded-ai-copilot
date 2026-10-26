@@ -40,7 +40,7 @@ flowchart LR
 - `app/embedder.py` turns text into normalized vectors with a local fastembed model, loaded lazily on first use; doesn't chunk, store or rank.
 - `app/semantic_search.py` ranks files by embedding similarity over in-memory chunk vectors; doesn't persist or call Gemini.
 - `app/code_graph.py` builds name-based relations from the index (who calls what, #include resolution with the nearest match first, .c/.h pairs). Ambiguous matches are kept as several candidates. `update_graph` patches a graph for content edits and path changes; the result equals a full rebuild. Used by /ask for the project map. It does not read the disk or call Gemini.
-- `app/logging_config.py` sets up logging. It does not choose the log messages.
+- `app/logging_config.py` sets up logging (console INFO, file DEBUG for the app's own loggers). It does not choose the log messages.
 
 ## Setup
 
@@ -78,7 +78,7 @@ Startup fails if either value is missing or empty (`RuntimeError: GEMINI_API_KEY
 
 The running app reads one project directory. `PROJECT_PATH` unset, empty, or whitespace-only uses `sample_project/`. A relative path resolves against the repo root, not the process cwd. A leading `~` is expanded. An absolute path is recommended. The path must be an existing directory or startup fails. The path is read once at startup; restart the app after changing it. One project is used per process. It loads `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`, `.inl`, `.s`, `.asm`, and `.ld` files, including files in subdirectories. Suffixes are matched case-insensitively, so `.S` and `.s` assembly and `.ld` linker scripts load.
 
-What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB are skipped with a warning. A file that isn't valid UTF-8 is read as Windows-1252 (cp1252) with a warning; if neither works it's skipped with a warning.
+What gets loaded: hidden directories and `build`, `out`, and `cmake-build-*` are always skipped. The vendor defaults are skipped by name, at any depth, case-insensitive. Files over 512 KiB, and files that are neither UTF-8 nor cp1252, are skipped; a file that isn't valid UTF-8 is read as Windows-1252 (cp1252). Each load logs **one summary line per kind** (cp1252 at INFO, the two skip kinds at WARNING) with the count and up to 3 example paths relative to the project. The per-file list is written at DEBUG level to logs/app.log only (console stays at INFO).
 
 Prompt order in full mode: instructions, project map, file/line count header, files sorted by path (relative paths, per-file line counts), question. The map lists per file its includes, types, macros, variables, declared and defined functions (with line ranges) and statics. It's capped at 20% of MAX_PROMPT_TOKENS (about 3 characters per token) and compacted in fixed tiers (no macros, then no statics, then counts only, then omitted). Its first line names the tier. Headers included but not loaded are listed as external. Partial mode uses the same instructions, then a focused map, a partial-context notice, the selected files in rank order, and the question.
 
@@ -96,7 +96,7 @@ From the repo root:
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Logs go to `logs/app.log` and to the console, including the startup configuration messages. The `logs/` directory is created when the app starts.
+Logs go to `logs/app.log` and to the console, including the startup configuration messages. The console shows INFO and above, and `logs/app.log` also records DEBUG messages from the app's own modules (not from libraries). code_index's existing per-file "Parse errors" DEBUG lines will now also appear in `logs/app.log`. The `logs/` directory is created when the app starts.
 
 ## API
 
