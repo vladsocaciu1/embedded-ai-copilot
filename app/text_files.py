@@ -2,7 +2,7 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 
-from app.models import ProjectFile, Symbol, SymbolKind
+from app.models import Call, ProjectFile, Symbol, SymbolKind
 
 KCONFIG_NAMES_PREFIX = "Kconfig"
 PIECE_CAP = 1500
@@ -16,6 +16,7 @@ _KCONFIG_SYMBOL = re.compile(r"^(?:menuconfig|config)\s+([A-Za-z0-9_]+)\s*$")
 _RST_UNDERLINE = re.compile(r"^([=\-#*~^\"'`+:.<>_])\1{2,}\s*$")
 _DT_LABEL = re.compile(r"^\s*([A-Za-z_]\w*):\s*[\w@,\-]+\s*\{", re.M)
 _DT_ALIAS = re.compile(r"^\s*([A-Za-z_][\w\-]*)\s*=\s*&", re.M)
+_CONFIG_REF = re.compile(r"\bCONFIG_[A-Z0-9_]+\b")
 _CONF_OPTION = re.compile(r"^\s*(CONFIG_[A-Za-z0-9_]+)\s*=", re.M)
 _ASM_SECTION_FUNC = re.compile(r"^\s*SECTION_FUNC\(\s*[^,()]+,\s*(\w+)\s*\)")
 _ASM_SUBSEC_FUNC = re.compile(r"^\s*SECTION_SUBSEC_FUNC\(\s*[^,()]+,\s*[^,()]+,\s*(\w+)\s*\)")
@@ -174,3 +175,15 @@ def _asm_end(lines: list[str], start: int, next_start: int) -> int:
         while end > start and not lines[end - 1].strip():
             end -= 1
     return max(end, start)
+
+
+def config_refs(content: str) -> tuple[Call, ...]:
+    if "CONFIG_" not in content:
+        return ()
+    found: list[Call] = []
+    for number, line in enumerate(content.splitlines(), 1):
+        if "CONFIG_" not in line:
+            continue
+        for name in dict.fromkeys(_CONFIG_REF.findall(line)):
+            found.append(Call(caller="", callee=name, line=number, is_member=False))
+    return tuple(found)

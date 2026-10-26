@@ -38,6 +38,17 @@ _TERM_KINDS = frozenset({
 })
 
 
+_SYSCALL_PREFIXES = ("z_impl_", "z_vrfy_")
+
+
+def _syscall_variants(seed: str) -> tuple[str, ...]:
+    for prefix in _SYSCALL_PREFIXES:
+        if seed.startswith(prefix) and len(seed) > len(prefix):
+            base = seed[len(prefix):]
+            return (base, *(p + base for p in _SYSCALL_PREFIXES if p != prefix))
+    return tuple(prefix + seed for prefix in _SYSCALL_PREFIXES)
+
+
 def rank_files_detailed(
     question: str, index: ProjectIndex, graph: CodeGraph
 ) -> tuple[RankedFile, ...]:
@@ -78,6 +89,9 @@ def rank_files_detailed(
     for seed in seeds:
         for ref in graph.definitions(seed):
             add(ref.path, 1)
+        for variant in _syscall_variants(seed):
+            for ref in graph.definitions(variant):
+                add(ref.path, 1)
 
     tier01 = sorted(
         (path for path, tier in tiers.items() if tier <= 1),

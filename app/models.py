@@ -44,7 +44,7 @@ class Include:
 
 @dataclass(frozen=True)
 class Call:
-    caller: str      # enclosing FUNCTION symbol name (qualified in C++)
+    caller: str      # enclosing FUNCTION symbol name (qualified in C++); "" = file-level CONFIG_X reference
     callee: str      # as written: "Can_Init", "ns::k"; member calls: the member name
     line: int        # 1-based
     is_member: bool  # obj.f() / p->f() / this->f()

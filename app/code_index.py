@@ -16,7 +16,9 @@ from app.models import (
     Symbol,
     SymbolKind,
 )
-from app.text_files import index_text, text_kind
+from app.text_files import config_refs, index_text, text_kind
+
+_CONFIG_REF_KINDS = frozenset({"asm", "cmake"})
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +102,7 @@ def index_file(project_file: ProjectFile) -> FileSymbols:
             has_errors=False,
             symbols=symbols,
             includes=(),
-            calls=(),
+            calls=config_refs(project_file.content) if kind in _CONFIG_REF_KINDS else (),
         )
 
     language = _C_LANGUAGE if grammar == "c" else _CPP_LANGUAGE
@@ -117,7 +119,7 @@ def index_file(project_file: ProjectFile) -> FileSymbols:
         has_errors=has_errors,
         symbols=tuple(symbols),
         includes=tuple(includes),
-        calls=tuple(calls),
+        calls=tuple(calls) + config_refs(project_file.content),
     )
 
 
