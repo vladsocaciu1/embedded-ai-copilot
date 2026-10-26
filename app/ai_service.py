@@ -12,8 +12,9 @@ from google.genai import errors
 from app import gemini_retry
 from app.code_graph import CodeGraph
 from app.config import load_settings
-from app.context_selector import pack_files, rank_files_detailed
+from app.context_selector import fuse_rankings, pack_files, rank_files_detailed
 from app.index_cache import IndexCache
+from app.semantic_service import SemanticResult, SemanticService
 from app.models import Answer, AnswerContext, PreparedPrompt, ProjectFile, ProjectIndex
 from app.project_loader import load_project_files
 from app.prompts import (
@@ -29,6 +30,8 @@ settings = load_settings()
 client = genai.Client(api_key=settings.gemini_api_key)
 
 index_cache = IndexCache()
+
+semantic_service = SemanticService(settings.embedding)
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +180,7 @@ def _prepare(
                 map_tier=map_tier,
                 map_files=map_files,
                 ranked=(),
+                semantic="off" if semantic_service.enabled else None,
             )
         logger.info(
             f"Full prompt is {count} tokens (limit {limit}); using partial context."
@@ -188,8 +192,12 @@ def _prepare(
         )
 
     started = time.perf_counter()
+    semantic = semantic_service.prepare(question, index, project_files)
     ranked = rank_files_detailed(question, index, graph)
+    if semantic.order:
+        ranked = fuse_rankings(ranked, semantic.order)
     ranked_ms = round((time.perf_counter() - started) * 1000)
+    _log_semantic(semantic)
     budget = (
         int(limit * MAP_CHARS_PER_TOKEN)
         - cap
@@ -255,6 +263,7 @@ def _prepare(
         map_tier=project_map.tier,
         map_files=project_map.file_count,
         ranked=ranked,
+        semantic=semantic.status,
     )
 
 
@@ -301,11 +310,35 @@ def warm_up() -> None:
             f"Index warm-up skipped: invalid project path {settings.project_path}"
         )
         return
-    index_cache.get(settings.project_path, project_files)
+    index, _graph = index_cache.get(settings.project_path, project_files)
     elapsed_ms = round((time.perf_counter() - started) * 1000)
     logger.info(
         f"Index warm-up done: {len(project_files)} files in {elapsed_ms} ms."
     )
+    if semantic_service.enabled:
+        total_chars = sum(len(project_file.content) for project_file in project_files)
+        if total_chars > settings.max_prompt_tokens * MAX_CHARS_PER_TOKEN:
+            semantic_service.start_build(index, project_files)
+            logger.info("Semantic index: building in the background.")
+
+
+def _log_semantic(semantic: SemanticResult) -> None:
+    if semantic.status is None:
+        return
+    if semantic.status == "ready":
+        logger.info(f"Semantic search: ready ({len(semantic.order)} files ranked).")
+        return
+    if semantic.status == "building":
+        progress = semantic_service.progress()
+        if progress is None:
+            done, total = 0, 0
+        else:
+            done, total = progress
+        logger.info(
+            f"Semantic search: building ({done}/{total} chunks); using lexical ranking."
+        )
+        return
+    logger.info("Semantic search: unavailable; using lexical ranking.")
 
 
 def _build_partial(

@@ -66,8 +66,8 @@ GEMINI_MODEL=your-model
 # EXCLUDE_DIRS=CMSIS,*_HAL_Driver,Middlewares,third_party,vendor,external,GenData
 # Optional: max prompt size in tokens (default 200000; Gemini 3.1 Pro input pricing doubles above 200k).
 # MAX_PROMPT_TOKENS=200000
-# Optional: experimental; `local` is accepted but not used by /ask until a later Phase 5 step.
-# SEMANTIC_SEARCH=off
+# Optional: semantic ranking for partial context. Default is local. `off` disables it.
+# SEMANTIC_SEARCH=local
 # Optional: local embedding model (default BAAI/bge-small-en-v1.5).
 # EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 # Optional: models and vectors; default .cache/ in the repo.
@@ -86,7 +86,7 @@ Prompt order in full mode: instructions, project map, file/line count header, fi
 
 Each answer calls Gemini's free `count_tokens` before `generate_content`. Routing uses the total source characters. At most 10 characters per allowed token, the request stays in full mode: the project map, every file, and one count. If that count is over the limit, the map is dropped and the tokens are counted again. If both full counts are over, or the source is already over the character limit, the request uses partial context instead of returning 413. The character limit does not skip the index: the cache is read on every request, and a background thread warms it at startup.
 
-Partial context ranks files from names in the question and the index and graph, then packs whole files into the remaining character budget. The prompt includes a partial-context notice. The answer text ends with a fixed footer stating how many of the project files fit the token budget and that the included files are listed in context.files_included. One exact count follows. If it is still over, the lowest-ranked included files are dropped once and the prompt is counted again. 413 is returned only when not even one selected file fits (an estimated count, with no `count_tokens` call) or when the partial prompt is still over the limit after that shrink. A request counts tokens at most four times. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. The index and graph stay cached between requests and refresh from the loaded files, so code edits are picked up without a restart.
+Partial context ranks files from names in the question and the index and graph. When semantic search is enabled and its index is ready, that order is fused with the semantic ranking; until then the ranking stays lexical. Whole files are then packed into the remaining character budget. See Semantic search. The prompt includes a partial-context notice. The answer text ends with a fixed footer stating how many of the project files fit the token budget and that the included files are listed in context.files_included. One exact count follows. If it is still over, the lowest-ranked included files are dropped once and the prompt is counted again. 413 is returned only when not even one selected file fits (an estimated count, with no `count_tokens` call) or when the partial prompt is still over the limit after that shrink. A request counts tokens at most four times. A `MAX_PROMPT_TOKENS` value above about 1M gets a 502 from Gemini. The index and graph stay cached between requests and refresh from the loaded files, so code edits are picked up without a restart.
 
 ## Run
 
@@ -303,9 +303,24 @@ Chunk embeddings are also stored on disk under `<EMBEDDING_CACHE_DIR>/vectors/<m
 uv run python scripts/vector_check.py <STM32CubeF4 clone root>/Projects/STM32F4-Discovery --scope . --cache-dir /tmp/vec-check
 ```
 
-`scripts/vector_check.py` embeds one scope into that index and prints ensure, lookup, size, and peak RSS. `/ask` does not read the index yet (spec 27).
+`scripts/vector_check.py` embeds one scope into that index and prints ensure, lookup, size, and peak RSS. Partial `/ask` and `/context` read that index once it is ready.
 
-`SEMANTIC_SEARCH=local` is accepted and validated. It is not used by `/ask` yet.
+## Semantic search
+
+Semantic search runs only for partial context. When the whole project fits the prompt, nothing is built and the embedding model is not loaded.
+
+`SEMANTIC_SEARCH` defaults to `local`. One background thread (`semantic-build`) builds the vector index at startup when the project is over the character pre-check, and the first partial request starts it otherwise (a project that goes partial only because the counted prompt is over the token limit). Until the index is ready, `/ask` and `/context` keep today's lexical ranking. A failure (model download, an offline machine, a disk error) logs one warning and stays lexical for five minutes, then the next partial request tries again.
+
+`POST /context` then includes a top-level `semantic` field (`off`, `building`, or `ready`) and a `semantic` field on every `ranked` item (the 1-based semantic rank, or null). Both are omitted when semantic search is off, so that response stays key-for-key the same as a lexical run. `/ask` does not change shape.
+
+Costs of the default `local` mode:
+
+- The first run downloads about 67 MB into `<EMBEDDING_CACHE_DIR>/models`.
+- Building the STM32F4-Discovery folder peaks at about 1.1 GB of RAM and takes about one to two minutes. Requests are not blocked while that runs; answers stay lexical until the index is ready.
+- Vectors are about 1.5 KB per chunk on disk (about 1.6 MB for STM32F4-Discovery, about 28 MB for a whole STM32Cube tree).
+- An offline machine cannot download the model, so it stays on lexical ranking.
+
+Set `SEMANTIC_SEARCH=off` to disable it: no build thread, no model load, no cache writes. `EMBEDDING_CACHE_DIR` is where the model and the vectors live (default `.cache/` in the repo). Deleting `.cache` is safe; the next partial project downloads the model again and rebuilds the index.
 
 ## Graph update check
 
@@ -318,7 +333,7 @@ A path change with an uncommon name stays within `get` <= 1.0 s. Adding, removin
 
 Each module has one job. Domain data is a dataclass (`ProjectFile`, `Settings`). Pydantic validates the HTTP request (`AskRequest`). The loader, the prompt builder, and the Gemini client are called directly.
 
-Embeddings sit behind SEMANTIC_SEARCH (default off): a numpy matrix on disk keyed by chunk hash, with no vector database. Phase 3 adds a tree-sitter code index used for the project map. When the project does not fit the prompt budget, files are selected from names in the question and the index and graph, without embeddings, and sent whole. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
+Embeddings sit behind SEMANTIC_SEARCH (default local): a numpy matrix on disk keyed by chunk hash, with no vector database. Phase 3 adds a tree-sitter code index used for the project map. When the project does not fit the prompt budget, files are selected from names in the question and the index and graph, fused with the semantic ranking once that index is ready, and sent whole. Until then the selection stays lexical. The sample project is sent in one prompt. Those tools get added when this design hits a real limit.
 
 ## Phase 3 summary
 
@@ -333,7 +348,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 3. Phase 2: smarter project loading (done)
 4. Phase 3: tree-sitter / code structure (done)
 5. Phase 4: hardening: MIT license, Gemini rate-limit retries, incremental graph updates (done)
-6. Phase 5: RAG / embeddings / local vector index (in progress)
+6. Phase 5: RAG / embeddings; local semantic search ranks partial context (in progress)
 7. Phase 6: agentic AI
 
 ## Layout
@@ -357,6 +372,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── project_loader.py
 │   ├── prompts.py
 │   ├── semantic_search.py
+│   ├── semantic_service.py
 │   ├── vector_index.py
 │   └── prompts/
 │       └── assistant.md
@@ -383,6 +399,7 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── conftest.py
 │   ├── fake_embedder.py
 │   ├── test_ai_service.py
+│   ├── test_ai_service_semantic.py
 │   ├── test_api.py
 │   ├── test_chunker.py
 │   ├── test_code_graph.py
@@ -394,10 +411,12 @@ On STM32CubeF4 (~16.6k files): warm-up ~15 s, ~1-2 s per partial question with a
 │   ├── test_gemini_retry.py
 │   ├── test_index_cache.py
 │   ├── test_logging_startup.py
+│   ├── test_main.py
 │   ├── test_project_loader.py
 │   ├── test_prompts.py
 │   ├── test_selection_eval.py
 │   ├── test_semantic_search.py
+│   ├── test_semantic_service.py
 │   ├── test_vector_check.py
 │   └── test_vector_index.py
 ├── .gitignore

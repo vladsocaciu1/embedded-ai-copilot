@@ -102,7 +102,22 @@ async def context(request: AskRequest, exact: bool = False):
     with _service_errors():
         prepared = ai_service.dry_run(request.question, exact=exact)
     included = set(prepared.included)
-    return {
+    include_semantic = prepared.semantic is not None
+    ranked = []
+    for item in prepared.ranked[:CONTEXT_RANKED_LIMIT]:
+        row = {
+            "path": item.path.as_posix(),
+            "reason": item.reason,
+            "included": item.path in included,
+            "focus": item.focus,
+            "tier": item.tier,
+            "hits": item.hits,
+            "lexical": item.lexical,
+        }
+        if include_semantic:
+            row["semantic"] = item.semantic
+        ranked.append(row)
+    body = {
         "mode": prepared.mode,
         "limit": prepared.limit,
         "prompt_tokens": prepared.token_count,
@@ -113,16 +128,8 @@ async def context(request: AskRequest, exact: bool = False):
         "map_tier": prepared.map_tier,
         "map_files": prepared.map_files,
         "ranked_total": len(prepared.ranked),
-        "ranked": [
-            {
-                "path": item.path.as_posix(),
-                "reason": item.reason,
-                "included": item.path in included,
-                "focus": item.focus,
-                "tier": item.tier,
-                "hits": item.hits,
-                "lexical": item.lexical,
-            }
-            for item in prepared.ranked[:CONTEXT_RANKED_LIMIT]
-        ],
+        "ranked": ranked,
     }
+    if include_semantic:
+        body["semantic"] = prepared.semantic
+    return body
