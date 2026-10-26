@@ -1,0 +1,951 @@
+{
+  "project_files": 129,
+  "ranker": "hybrid",
+  "scope": [
+    "."
+  ],
+  "model": "BAAI/bge-small-en-v1.5",
+  "embed": {
+    "unique": 1250,
+    "seconds": 109.37254625099999
+  },
+  "files": [
+    {
+      "cases_file": "zephyr_eval_cases.json",
+      "summary": {
+        "cases": 8,
+        "passed": 8,
+        "hit5": 8,
+        "mrr": 1.0
+      },
+      "results": [
+        {
+          "question": "What does z_impl_k_sem_give do?",
+          "expected": [
+            "kernel/sem.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Explain kernel/mutex.c",
+          "expected": [
+            "kernel/mutex.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does z_timer_expiration_handler do?",
+          "expected": [
+            "kernel/timer.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Where is adjust_owner_prio defined, and what calls it?",
+          "expected": [
+            "kernel/mutex.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does _isr_wrapper do?",
+          "expected": [
+            "arch/arm/core/cortex_m/isr_wrapper.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Summarize samples/basic/blinky/src/main.c",
+          "expected": [
+            "samples/basic/blinky/src/main.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does work_queue_main do?",
+          "expected": [
+            "kernel/work.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does z_setup_new_thread initialize?",
+          "expected": [
+            "kernel/thread.c"
+          ],
+          "k": 2,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        }
+      ],
+      "lexical_summary": {
+        "cases": 8,
+        "passed": 8,
+        "hit5": 8,
+        "mrr": 1.0
+      },
+      "lexical_results": [
+        {
+          "question": "What does z_impl_k_sem_give do?",
+          "expected": [
+            "kernel/sem.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Explain kernel/mutex.c",
+          "expected": [
+            "kernel/mutex.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does z_timer_expiration_handler do?",
+          "expected": [
+            "kernel/timer.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Where is adjust_owner_prio defined, and what calls it?",
+          "expected": [
+            "kernel/mutex.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does _isr_wrapper do?",
+          "expected": [
+            "arch/arm/core/cortex_m/isr_wrapper.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Summarize samples/basic/blinky/src/main.c",
+          "expected": [
+            "samples/basic/blinky/src/main.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does work_queue_main do?",
+          "expected": [
+            "kernel/work.c"
+          ],
+          "k": 1,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does z_setup_new_thread initialize?",
+          "expected": [
+            "kernel/thread.c"
+          ],
+          "k": 2,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "cases_file": "zephyr_semantic_dev.json",
+      "summary": {
+        "cases": 18,
+        "passed": 17,
+        "hit5": 17,
+        "mrr": 0.5740740740740741
+      },
+      "results": [
+        {
+          "question": "How does k_sem_take block a thread, and what happens when the timeout expires or the semaphore is given?",
+          "expected": [
+            "kernel/sem.c"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "How does k_mutex implement priority inheritance, and what does k_mutex_unlock do to the owner's priority?",
+          "expected": [
+            "kernel/mutex.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "How does the scheduler choose the next thread to run?",
+          "expected": [
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How do I create a thread at build time versus at runtime, and what do the stack and priority arguments mean?",
+          "expected": [
+            "kernel/thread.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "What is the difference between cooperative and preemptible threads, and how does time slicing work?",
+          "expected": [
+            "kernel/timeslicing.c"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "How do I submit work to the system work queue, and which thread runs the handler?",
+          "expected": [
+            "kernel/work.c"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "How does a k_timer expire, and where does its callback run?",
+          "expected": [
+            "kernel/timer.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "How does Cortex-M dispatch an interrupt to my ISR registered with IRQ_CONNECT?",
+          "expected": [
+            "arch/arm/core/cortex_m/isr_wrapper.c"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "How does a context switch happen on Cortex-M, that is, what does PendSV do?",
+          "expected": [
+            "arch/arm/core/cortex_m/swap_helper.S"
+          ],
+          "k": 5,
+          "ranks": [
+            4
+          ],
+          "rank": 4,
+          "passed": true
+        },
+        {
+          "question": "How do k_mem_slab_alloc and k_mem_slab_free work, and what happens when no block is free?",
+          "expected": [
+            "kernel/mem_slab.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How does k_condvar_wait release the mutex while a thread waits, and what does k_condvar_signal do when nobody is waiting?",
+          "expected": [
+            "kernel/condvar.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How does a message queue copy data in and out of its ring buffer, and what happens to a sender when the queue is full?",
+          "expected": [
+            "kernel/msg_q.c"
+          ],
+          "k": 5,
+          "ranks": [
+            6
+          ],
+          "rank": 6,
+          "passed": false
+        },
+        {
+          "question": "How does the blinky sample find the LED from devicetree with DT_ALIAS(led0) and GPIO_DT_SPEC_GET?",
+          "expected": [
+            "samples/basic/blinky/src/main.c"
+          ],
+          "k": 5,
+          "ranks": [
+            4
+          ],
+          "rank": 4,
+          "passed": true
+        },
+        {
+          "question": "Which Kconfig options set the number of preemptible priorities and the tick rate?",
+          "expected": [
+            "kernel/Kconfig"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Which factors make a thread unready, and which thread states does the kernel documentation describe?",
+          "expected": [
+            "doc/kernel/services/threads/index.rst"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "How do I choose between deferred and immediate logging mode?",
+          "expected": [
+            "subsys/logging/Kconfig.mode"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How is thread awareness for debuggers enabled in the philosophers sample?",
+          "expected": [
+            "samples/philosophers/prj.conf"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "Which board overlay in the blinky sample defines the led0 alias for a CPU core of the nRF54H20 DK?",
+          "expected": [
+            "samples/basic/blinky/boards/nrf54h20dk_nrf54h20_cpuppr.overlay"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        }
+      ],
+      "lexical_summary": {
+        "cases": 18,
+        "passed": 11,
+        "hit5": 11,
+        "mrr": 0.3908068783068783
+      },
+      "lexical_results": [
+        {
+          "question": "How does k_sem_take block a thread, and what happens when the timeout expires or the semaphore is given?",
+          "expected": [
+            "kernel/sem.c"
+          ],
+          "k": 5,
+          "ranks": [
+            12
+          ],
+          "rank": 12,
+          "passed": false
+        },
+        {
+          "question": "How does k_mutex implement priority inheritance, and what does k_mutex_unlock do to the owner's priority?",
+          "expected": [
+            "kernel/mutex.c"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "How does the scheduler choose the next thread to run?",
+          "expected": [
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "How do I create a thread at build time versus at runtime, and what do the stack and priority arguments mean?",
+          "expected": [
+            "kernel/thread.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "What is the difference between cooperative and preemptible threads, and how does time slicing work?",
+          "expected": [
+            "kernel/timeslicing.c"
+          ],
+          "k": 5,
+          "ranks": [
+            6
+          ],
+          "rank": 6,
+          "passed": false
+        },
+        {
+          "question": "How do I submit work to the system work queue, and which thread runs the handler?",
+          "expected": [
+            "kernel/work.c"
+          ],
+          "k": 5,
+          "ranks": [
+            7
+          ],
+          "rank": 7,
+          "passed": false
+        },
+        {
+          "question": "How does a k_timer expire, and where does its callback run?",
+          "expected": [
+            "kernel/timer.c"
+          ],
+          "k": 5,
+          "ranks": [
+            5
+          ],
+          "rank": 5,
+          "passed": true
+        },
+        {
+          "question": "How does Cortex-M dispatch an interrupt to my ISR registered with IRQ_CONNECT?",
+          "expected": [
+            "arch/arm/core/cortex_m/isr_wrapper.c"
+          ],
+          "k": 5,
+          "ranks": [
+            4
+          ],
+          "rank": 4,
+          "passed": true
+        },
+        {
+          "question": "How does a context switch happen on Cortex-M, that is, what does PendSV do?",
+          "expected": [
+            "arch/arm/core/cortex_m/swap_helper.S"
+          ],
+          "k": 5,
+          "ranks": [
+            8
+          ],
+          "rank": 8,
+          "passed": false
+        },
+        {
+          "question": "How do k_mem_slab_alloc and k_mem_slab_free work, and what happens when no block is free?",
+          "expected": [
+            "kernel/mem_slab.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How does k_condvar_wait release the mutex while a thread waits, and what does k_condvar_signal do when nobody is waiting?",
+          "expected": [
+            "kernel/condvar.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "How does a message queue copy data in and out of its ring buffer, and what happens to a sender when the queue is full?",
+          "expected": [
+            "kernel/msg_q.c"
+          ],
+          "k": 5,
+          "ranks": [
+            15
+          ],
+          "rank": 15,
+          "passed": false
+        },
+        {
+          "question": "How does the blinky sample find the LED from devicetree with DT_ALIAS(led0) and GPIO_DT_SPEC_GET?",
+          "expected": [
+            "samples/basic/blinky/src/main.c"
+          ],
+          "k": 5,
+          "ranks": [
+            6
+          ],
+          "rank": 6,
+          "passed": false
+        },
+        {
+          "question": "Which Kconfig options set the number of preemptible priorities and the tick rate?",
+          "expected": [
+            "kernel/Kconfig"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "Which factors make a thread unready, and which thread states does the kernel documentation describe?",
+          "expected": [
+            "doc/kernel/services/threads/index.rst"
+          ],
+          "k": 5,
+          "ranks": [
+            6
+          ],
+          "rank": 6,
+          "passed": false
+        },
+        {
+          "question": "How do I choose between deferred and immediate logging mode?",
+          "expected": [
+            "subsys/logging/Kconfig.mode"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How is thread awareness for debuggers enabled in the philosophers sample?",
+          "expected": [
+            "samples/philosophers/prj.conf"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "Which board overlay in the blinky sample defines the led0 alias for a CPU core of the nRF54H20 DK?",
+          "expected": [
+            "samples/basic/blinky/boards/nrf54h20dk_nrf54h20_cpuppr.overlay"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "cases_file": "zephyr_semantic_dev2.json",
+      "summary": {
+        "cases": 10,
+        "passed": 8,
+        "hit5": 8,
+        "mrr": 0.6280831571529245
+      },
+      "results": [
+        {
+          "question": "What does k_stack_push do when a thread is already waiting in k_stack_pop?",
+          "expected": [
+            "kernel/stack.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How is k_futex_wait implemented, and when does it return -EAGAIN?",
+          "expected": [
+            "kernel/futex.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does k_thread_priority_set do to a thread that is already on the ready queue?",
+          "expected": [
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does z_vrfy_k_event_post check before it posts the events?",
+          "expected": [
+            "kernel/events.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How does k_uptime_ticks get the current tick count?",
+          "expected": [
+            "kernel/timeout.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "Where is CONFIG_TIMESLICING defined, and which scheduler code is built only when it is on?",
+          "expected": [
+            "kernel/Kconfig",
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1,
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "What does CONFIG_SMP change in the kernel, and where is the option defined?",
+          "expected": [
+            "kernel/Kconfig.smp",
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1,
+            43
+          ],
+          "rank": 43,
+          "passed": false
+        },
+        {
+          "question": "Which kernel code is compiled when CONFIG_THREAD_MONITOR is enabled?",
+          "expected": [
+            "kernel/Kconfig",
+            "kernel/thread.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1,
+            11
+          ],
+          "rank": 11,
+          "passed": false
+        },
+        {
+          "question": "Which sample sets CONFIG_MP_MAX_NUM_CPUS in its prj.conf, and where is the option defined?",
+          "expected": [
+            "kernel/Kconfig.smp",
+            "samples/philosophers/prj.conf"
+          ],
+          "k": 5,
+          "ranks": [
+            3,
+            1
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "Where does the threads sample use DT_ALIAS(led0) and GPIO_DT_SPEC_GET_OR?",
+          "expected": [
+            "samples/basic/threads/src/main.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        }
+      ],
+      "lexical_summary": {
+        "cases": 10,
+        "passed": 7,
+        "hit5": 7,
+        "mrr": 0.4891851851851852
+      },
+      "lexical_results": [
+        {
+          "question": "What does k_stack_push do when a thread is already waiting in k_stack_pop?",
+          "expected": [
+            "kernel/stack.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "How is k_futex_wait implemented, and when does it return -EAGAIN?",
+          "expected": [
+            "kernel/futex.c"
+          ],
+          "k": 5,
+          "ranks": [
+            2
+          ],
+          "rank": 2,
+          "passed": true
+        },
+        {
+          "question": "What does k_thread_priority_set do to a thread that is already on the ready queue?",
+          "expected": [
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "What does z_vrfy_k_event_post check before it posts the events?",
+          "expected": [
+            "kernel/events.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        },
+        {
+          "question": "How does k_uptime_ticks get the current tick count?",
+          "expected": [
+            "kernel/timeout.c"
+          ],
+          "k": 5,
+          "ranks": [
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "Where is CONFIG_TIMESLICING defined, and which scheduler code is built only when it is on?",
+          "expected": [
+            "kernel/Kconfig",
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1,
+            3
+          ],
+          "rank": 3,
+          "passed": true
+        },
+        {
+          "question": "What does CONFIG_SMP change in the kernel, and where is the option defined?",
+          "expected": [
+            "kernel/Kconfig.smp",
+            "kernel/sched.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1,
+            54
+          ],
+          "rank": 54,
+          "passed": false
+        },
+        {
+          "question": "Which kernel code is compiled when CONFIG_THREAD_MONITOR is enabled?",
+          "expected": [
+            "kernel/Kconfig",
+            "kernel/thread.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1,
+            25
+          ],
+          "rank": 25,
+          "passed": false
+        },
+        {
+          "question": "Which sample sets CONFIG_MP_MAX_NUM_CPUS in its prj.conf, and where is the option defined?",
+          "expected": [
+            "kernel/Kconfig.smp",
+            "samples/philosophers/prj.conf"
+          ],
+          "k": 5,
+          "ranks": [
+            6,
+            1
+          ],
+          "rank": 6,
+          "passed": false
+        },
+        {
+          "question": "Where does the threads sample use DT_ALIAS(led0) and GPIO_DT_SPEC_GET_OR?",
+          "expected": [
+            "samples/basic/threads/src/main.c"
+          ],
+          "k": 5,
+          "ranks": [
+            1
+          ],
+          "rank": 1,
+          "passed": true
+        }
+      ]
+    }
+  ]
+}
