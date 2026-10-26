@@ -379,3 +379,113 @@ def _chunks_line(line: str) -> tuple[int, int, int, int]:
     assert parts[4] == "function"
     assert parts[6] == "unique"
     return int(parts[1]), int(parts[3]), int(parts[5]), int(parts[7])
+
+
+def _baseline_c_sources() -> list[ProjectFile]:
+    """C/C++ inputs of the tests above, built the same way, one file at a time.
+
+    Captured on main 2845fb2 before text-file chunking. H6 compares the key set.
+    """
+    files: list[ProjectFile] = []
+
+    def add(path: str, content: str) -> None:
+        files.append(ProjectFile(path=Path(path), content=content))
+
+    add(str(GOLDEN_PATH), GOLDEN)
+    add(str(GOLDEN_PATH), GOLDEN.replace("\n", "\r\n"))
+
+    long_comment = "/* " + ("alpha " * 200) + "*/\nvoid f(void) {}\n"
+    add("src/long.c", long_comment)
+    add("src/a.c", '#include "main.h"\nvoid f(void) {}\n')
+    add("src/a.c", "// not the card comment\nvoid f(void) {}\n")
+
+    kinds = textwrap.dedent(
+        """\
+        #define BUF 1
+        union U { int a; };
+        void proto(void);
+        int var;
+        struct Point { int x; };
+        enum Color { RED };
+        typedef int MyInt;
+        void func(void) {}
+        """
+    )
+    add("src/kinds.c", kinds)
+    none = textwrap.dedent(
+        """\
+        #define ONLY 1
+        union U { int a; };
+        void proto(void);
+        int var;
+        """
+    )
+    add("src/none.c", none)
+    add("src/dup.c", "#ifdef A\nvoid f(void) {}\n#else\nvoid f(void) {}\n#endif\n")
+    add("src/many.c", "".join(f"void f{i}(void) {{}}\n" for i in range(45)))
+
+    add("src/a.c", "// toggles the pin\n// forever\nvoid f(void) {}\n")
+    add("src/a.c", "// hello\n\nvoid f(void) {}\n")
+    lines = [f"// c{i:02d} text" for i in range(30)]
+    lines.append("void f(void) {}")
+    add("src/a.c", "\n".join(lines) + "\n")
+    long_lines = ["// " + ("abcd " * 20) for _ in range(25)]
+    long_lines.append("void f(void) {}")
+    add("src/a.c", "\n".join(long_lines) + "\n")
+
+    add("src/a.c", "void f(void)\n{\n  return 1;\n}\n")
+    long_body = ["void f(void)", "{"]
+    long_body.extend(f"  int x{i} = {i};" for i in range(200))
+    long_body.append("}")
+    add("src/a.c", "\n".join(long_body) + "\n")
+
+    add("a/b/c/d/e/f.c", "void f(void) {}\n")
+    add("src/a.c", "void f(void) {}\n")
+    add("startup.s", "nop\n")
+    add("link.ld", "SECTIONS {}\n")
+    add("inc/a.h", "void g(void);\nint x;\n")
+
+    cpp = textwrap.dedent(
+        """\
+        namespace ns {
+        class C {
+        public:
+            void m() { return; }
+        };
+        }
+        """
+    )
+    add("src/ns.cpp", cpp)
+
+    kept = "void kept(void) { return 1; }\nvoid edited(void) { return 1; }\n"
+    add("board/Examples/GPIO/Src/a.c", kept)
+    add("other/Examples/GPIO/Src/a.c", kept)
+    changed = kept.replace(
+        "edited(void) { return 1; }", "edited(void) { return 2; }"
+    )
+    add("board/Examples/GPIO/Src/a.c", changed)
+
+    add("board/Examples/GPIO/Src/a.c", "void a(void) {}\n")
+    add("other/Examples/GPIO/Src/a.c", "void a(void) {}\n")
+    add("src/c.c", "void c(void) {}\n")
+
+    add("src/a.c", "void f(void) { return; }\n")
+    add("src/b.h", "void g(void);\n")
+    add("src/c.s", "nop\n")
+    return files
+
+
+def test_h6_existing_c_chunk_keys_unchanged():
+    import json
+
+    expected = json.loads(
+        (Path(__file__).parent / "data" / "chunk_keys_main.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    keys: list[str] = []
+    for project_file in _baseline_c_sources():
+        index = build_index([project_file])
+        chunks = chunk_index(index, [project_file])
+        keys.extend(chunk.key for chunk in chunks)
+    assert sorted(set(keys)) == expected
