@@ -40,6 +40,7 @@ MAX_CHARS_PER_TOKEN = 10
 MAP_BUDGET_SHARE = 0.20
 MAP_CHARS_PER_TOKEN = 3
 PARTIAL_RESERVE_CHARS = 2_000
+MAX_SHRINK_ROUNDS = 8
 
 
 class AIServiceError(Exception):
@@ -232,7 +233,9 @@ def _prepare(
         instructions,
     )
     count = counter(prompt)
-    if count > limit:
+    for shrink_round in range(1, MAX_SHRINK_ROUNDS + 1):
+        if count <= limit:
+            break
         need = math.ceil((count - limit) * len(prompt) / count * 1.1)
         dropped = 0
         drop_count = 0
@@ -245,14 +248,18 @@ def _prepare(
         if not included:
             logger.warning(f"Prompt is {count} tokens (limit {limit}).")
             raise ProjectTooLargeError(count, limit)
+        logger.info(
+            f"Prompt is {count} tokens (limit {limit}); dropped {drop_count} "
+            f"file(s), {len(included)} left (round {shrink_round})."
+        )
         project_map, prompt = _build_partial(
             question, project_files, index, graph, ranked_paths, included, limit, cap,
             instructions,
         )
         count = counter(prompt)
-        if count > limit:
-            logger.warning(f"Prompt is {count} tokens (limit {limit}).")
-            raise ProjectTooLargeError(count, limit)
+    if count > limit:
+        logger.warning(f"Prompt is {count} tokens (limit {limit}).")
+        raise ProjectTooLargeError(count, limit)
 
     file_chars = sum(len(files_by_path[path].content) for path in included)
     logger.info(

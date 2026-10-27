@@ -81,3 +81,12 @@ def test_l5_instructions_keyword_replaces_only_the_first_part():
     )
     assert partial.startswith(assistant_prompt + "\n\nMAP")
     assert partial_learned == partial.replace(assistant_prompt, learning_instructions, 1)
+
+
+def test_l12_learning_prompt_asks_for_full_paths_from_the_project_root():
+    assert (
+        "Always write the full path from the project root, exactly as shown in the "
+        "prompt, never a bare file name (for example kernel/mutex.c:120, not mutex.c:120)."
+    ) in learning_prompt
+    assert "Give the full path there too." in learning_prompt
+    assert learning_prompt.count("full path") == 2
