@@ -132,4 +132,6 @@ async def context(request: AskRequest, exact: bool = False):
     }
     if include_semantic:
         body["semantic"] = prepared.semantic
+    if prepared.learning:
+        body["learning"] = True
     return body
